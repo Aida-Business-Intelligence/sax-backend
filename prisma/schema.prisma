@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   // admin, caixa, gerente, etc.
+  permissions String?  // JSON array de permissões
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]
+}
+
+model User {
+  id          String    @id @default(cuid())
+  email       String    @unique
+  password    String
+  name        String?
+  phone       String?
+  active      Boolean   @default(true)
+  roleId      String
+  role        Role      @relation(fields: [roleId], references: [id])
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Warehouse {
+  id            String    @id @default(cuid())
+  warehouseCode String    // código da loja (ex: 001)
+  warehouseName String    // nome fantasia
+  razaoSocial   String?   // razão social
+  type          String?   // tipo (ex: matriz, filial)
+  telefone      String?
+  email         String?
+  cidade        String?
+  estado        String?
+  cep           String?
+  address       String?   // logradouro / endereço
+  numero        String?
+  complemento   String?
+  bairro        String?
+  cnpj          String?
+  ie            String?   // inscrição estadual
+  im            String?   // inscrição municipal
+  note          String?   // observações
+  display       Boolean   @default(true) // ativo/inativo
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  users         User[]
+  clients       Client[]
+  proprietarios Proprietario[]
+  properties    Property[]
+}
+
+// ----------------------------------------------------------------------
+// Cadastros: clientes, proprietários, tags, seções do site
+// ----------------------------------------------------------------------
+
+model Client {
+  id                    String    @id @default(cuid())
+  name                  String
+  email                 String?
+  phone                 String?
+  document              String?
+  documentType          String?
+  birthDate             DateTime?
+  gender                String?
+  warehouseId           String?
+  zip                   String?
+  address               String?   // rua / billing_street
+  addressNumber         String?
+  complement            String?
+  neighborhood          String?
+  city                  String?
+  state                 String?
+  note                  String?
+  marketingConsent      Boolean?  @default(false)
+  communicationPreference String?
+  warehouse             Warehouse? @relation(fields: [warehouseId], references: [id])
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  properties            Property[]
+}
+
+model Proprietario {
+  id              String    @id @default(cuid())
+  nome            String
+  email           String?
+  telefone        String?
+  tipo_documento  String?
+  cpf_cnpj        String?
+  cep             String?
+  endereco        String?
+  numero          String?
+  complemento     String?
+  bairro          String?
+  cidade          String?
+  estado          String?
+  observacoes     String?
+  warehouse_id    String
+  status          String    @default("pending")
+  origem          String    @default("erp")
+  subdomain       String?   @unique
+  access_email    String?
+  password_hash   String?
+  must_change_password Boolean @default(false)
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Tag {
+  id        String       @id @default(cuid())
+  name      String       // ex: Frente Mar, Luxo, Lançamento
+  slug      String       @unique
+  active    Boolean      @default(true)
+  sortOrder Int          @default(0)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  properties PropertyTag[]
+}
+
+// Seção do site (ex: bloco "Frente Mar" na home). Imóveis são vinculados no cadastro do imóvel (campo "Exibir nas seções").
+model Section {
+  id        String   @id @default(cuid())
+  title     String   // título exibido no site (ex: Frente Mar)
+  slug      String   @unique
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  properties PropertySection[]
+}
+
+model Property {
+  id           String   @id @default(cuid())
+  ref          String?  // Referência automática ex: REF-00001 (gerada no create)
+  slug         String   @unique
+  title        String
+  description  String?
+  type         String   // venda, aluguel (primeiro tipo)
+  transactionTypes String? // JSON array ["venda","aluguel","crowdfunding"]
+  status       String   @default("draft") // draft, published, archived
+  propertyType String?  // casa, apartamento, terreno, etc.
+  price        Decimal? @db.Decimal(14, 2)  // legado / primeiro tipo
+  priceVenda   Decimal? @db.Decimal(14, 2)
+  priceAluguel Decimal? @db.Decimal(14, 2)
+  priceCrowdfunding Decimal? @db.Decimal(14, 2)
+  area         Decimal? @db.Decimal(10, 2)
+  bedrooms     Int?
+  suites       Int?   // quantos quartos são suítes
+  demiSuites   Int?   // quantos são demi-suítes
+  bathrooms    Int?
+  garage       Int?
+  address      String?
+  city         String?
+  neighborhood String?
+  state        String?
+  zip          String?
+  builder      String?  // Construtora
+  latitude     Decimal? @db.Decimal(10, 7)
+  longitude    Decimal? @db.Decimal(10, 7)
+  warehouseId  String
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  clientId     String?
+  client       Client?   @relation(fields: [clientId], references: [id])
+  proprietarioId String?  // ID do módulo Proprietários
+  comodidades  String?   // JSON array ["piscina","elevador",...]
+  mobiliado    Boolean?  @default(false)
+  aceita_pets  Boolean?  @default(false)
+  aceita_permuta Boolean? @default(false)
+  em_construcao Boolean? @default(false)
+  parceria     Boolean?  @default(false)
+  dataPrevistaEntrega DateTime?
+  tagImovel    String?   // JSON array de tags
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  media        PropertyMedia[]
+  tags         PropertyTag[]
+  sections     PropertySection[]
+}
+
+model PropertyTag {
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tagId      String
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  @@id([propertyId, tagId])
+}
+
+// Imóvel exibido em quais seções do site (escolhido no cadastro do imóvel).
+model PropertySection {
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  sectionId  String
+  section    Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  sortOrder  Int      @default(0)
+  @@id([propertyId, sectionId])
+}
+
+model PropertyMedia {
+  id         String   @id @default(cuid())
+  url        String
+  type       String   // image, video
+  sortOrder  Int      @default(0)
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+// Configuração do site público (banners, logo, favicon, menu, hero, logos parceiros). Uma única linha (singleton).
+model SiteConfig {
+  id                  String   @id @default(cuid())
+  featuredPropertyIds String?  // JSON array ["id1","id2",...] - imóveis no banner/carrossel
+  logoUrl             String?
+  faviconUrl          String?  // ícone da aba do navegador (favicon)
+  menuItems           String?  // JSON array de itens do menu (label, path, etc.)
+  heroContent         String?  // JSON: título, subtítulo, botão, exibição do mapa, etc.
+  partnerLogos        String?  // JSON array [{ url, name? }] - logos da seção Nossos Parceiros
+  aboutContent        String?  // JSON: textos e links da página Sobre nós
+  footerContent       String?  // JSON: rodapé (creci, copyright, redes sociais)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}

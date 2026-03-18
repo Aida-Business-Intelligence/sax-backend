@@ -1,0 +1,14 @@
+import 'dotenv/config';
+
+const PORT = Number(process.env.PORT) || 4000;
+const CORS_ORIGIN = process.env.CORS_ORIGIN?.split(',').map((s) => s.trim()) ?? ['http://localhost:3031'];
+const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-production';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? '7d';
+
+export const config = {
+  port: PORT,
+  corsOrigin: CORS_ORIGIN,
+  jwtSecret: JWT_SECRET,
+  jwtExpiresIn: JWT_EXPIRES_IN,
+  nodeEnv: process.env.NODE_ENV ?? 'development',
+};
