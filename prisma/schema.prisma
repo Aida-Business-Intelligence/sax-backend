@@ -227,6 +227,259 @@ model SiteConfig {
   partnerLogos        String?  // JSON array [{ url, name? }] - logos da seção Nossos Parceiros
   aboutContent        String?  // JSON: textos e links da página Sobre nós
   footerContent       String?  // JSON: rodapé (creci, copyright, redes sociais)
+  transactionTypes    String?  // JSON array [{ value, label }] - tipos no cadastro (Venda, Aluguel, Crowdfunding, etc.)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+}
+
+// Blog do site: cadastrado no PDV (admin), exibido no sax-site no menu Blog.
+model BlogPost {
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  title      String
+  excerpt    String
+  content    String
+  coverUrl   String?
+  tags       String?  // JSON array ["tag1","tag2"]
+  authorName String   @default("Equipe SAX")
+  published  Boolean  @default(true)
+  reactions  String?  // JSON { "likes": number }
+  comments   String?  // JSON array [{ id, authorName, message, createdAt }]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// Visitante do site: uma sessão com dados técnicos e de marketing (CRM).
+model SiteVisitor {
+  id          String   @id @default(cuid())
+  sessionId   String   @unique
+  firstSeen   DateTime @default(now())
+  lastSeen    DateTime @default(now())
+  ip          String?
+  userAgent   String?
+  deviceType  String?   // mobile, desktop, tablet
+  browser     String?
+  os          String?
+  country     String?
+  city        String?
+  region      String?
+  referrer    String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([lastSeen])
+  @@index([city])
+}
+
+// Leads/contatos captados no site (formulários com CPF, celular, etc.) para CRM e remarketing.
+model SiteLead {
+  id        String   @id @default(cuid())
+  sessionId String?  // vincula ao SiteVisitor
+  name      String?
+  email     String?
+  phone     String?
+  cpf       String?
+  source    String   @default("form") // form, contact, etc.
+  consent   Boolean  @default(true)
+  metadata  String?  // JSON: cidade, tipo, faixa de valor, etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId])
+  @@index([email])
+  @@index([phone])
+}
+
+// Eventos de analytics (navegação, tempo em página, cliques, scroll, buscas).
+model SiteAnalyticsEvent {
+  id        String   @id @default(cuid())
+  sessionId String
+  eventType String   // page_view, property_view, search, time_on_page, scroll, click
+  path      String?
+  payload   String?  // JSON
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// ----------------------------------------------------------------------
+// Tracking CRM: visitante identificado por fingerprint (persistente, logado ou não)
+// ----------------------------------------------------------------------
+
+model Visitor {
+  id          String   @id @default(cuid())
+  fingerprint String   @unique
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sessions TrackingSession[]
+  events   TrackingEvent[]
+  lead     Lead?
+
+  @@index([fingerprint])
+  @@index([updatedAt])
+}
+
+model Lead {
+  id             String    @id @default(cuid())
+  visitorId      String    @unique
+  name           String?
+  email          String?
+  phone          String?
+  status         String    @default("new")
+  score          Int       @default(0) // intenção de compra
+  temperature    String    @default("cold") // cold, warm, hot (score > 20 → warm, > 50 → hot)
+  lastActivityAt DateTime? // última atividade do visitante (atualizado a cada evento)
+  createdAt      DateTime  @default(now())
+
+  visitor Visitor @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([visitorId])
+  @@index([status])
+  @@index([score])
+  @@index([temperature])
+}
+
+model TrackingSession {
+  id        String    @id @default(cuid())
+  visitorId String
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  visitor Visitor @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([visitorId])
+}
+
+model TrackingEvent {
+  id        String   @id @default(cuid())
+  visitorId String
+  type      String   // PAGE_VIEW, VIEW_PROPERTY, CLICK_WHATSAPP, SEARCH, etc.
+  data      Json     // payload flexível
+  createdAt DateTime @default(now())
+
+  visitor Visitor @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([visitorId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// ----------------------------------------------------------------------
+// Reimpacto: automações e fila de eventos (WhatsApp, follow-up)
+// ----------------------------------------------------------------------
+
+model Automation {
+  id           String   @id @default(cuid())
+  name         String   // ex: "Visitou imóvel 2x → mensagem"
+  triggerType  String   // VIEW_PROPERTY_2X, CLICK_WHATSAPP
+  triggerConfig Json?   // { minViews?, withinHours?, ... }
+  actionType   String   // SEND_WHATSAPP, FOLLOW_UP
+  actionConfig Json?    // { template?, message?, ... }
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  queueItems AutomationQueue[]
+
+  @@index([active])
+}
+
+model AutomationQueue {
+  id            String    @id @default(cuid())
+  automationId  String
+  visitorId     String
+  leadId        String?   // opcional, para contexto
+  payload       Json      // contexto: slug, type, etc.
+  status        String    @default("pending") // pending, sent, failed
+  scheduledFor  DateTime  @default(now())
+  processedAt   DateTime?
+  resultPayload Json?     // resposta WhatsApp ou erro
+  createdAt     DateTime  @default(now())
+
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId])
+  @@index([visitorId])
+  @@index([status])
+  @@index([scheduledFor])
+}
+
+// ----------------------------------------------------------------------
+// Módulo File (PDV): pastas e arquivos por loja
+// ----------------------------------------------------------------------
+
+model FileFolder {
+  id          String      @id @default(cuid())
+  name        String
+  filesCount  Int         @default(0)  // contagem de arquivos na pasta
+  size        Int         @default(0)  // tamanho total em bytes
+  isFavorite  Boolean     @default(false)
+  warehouseId String?
+  parentId    String?     // subpasta: pasta pai
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  parent   FileFolder?  @relation("Subfolders", fields: [parentId], references: [id], onDelete: Cascade)
+  children FileFolder[] @relation("Subfolders")
+  files    File[]
+}
+
+model File {
+  id         String    @id @default(cuid())
+  folderId   String
+  name       String    // nome original do arquivo
+  size       Int       @default(0) // bytes
+  type       String?   // mime ou extensão
+  path       String    // caminho relativo no disco (ex: uploads/files/xxx.pdf)
+  isFavorite Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  folder FileFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+}
+
+// Integrações de armazenamento (Dropbox, Drive, OneDrive) por usuário
+model CloudIntegration {
+  id           String    @id @default(cuid())
+  userId       String
+  provider     String
+  accessToken  String?
+  refreshToken String?
+  email        String?
+  integratedAt DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+// ----------------------------------------------------------------------
+// Módulo Mail: contas de e-mail conectadas por usuário (IMAP)
+// ----------------------------------------------------------------------
+
+model EmailAccount {
+  id           String   @id @default(cuid())
+  userId       String
+  email        String
+  displayName  String?  // nome exibido (ex: "Trabalho", "Pessoal")
+  provider     String   @default("imap") // imap | gmail | outlook
+  imapHost     String
+  imapPort     Int      @default(993)
+  imapSecure   Boolean  @default(true)
+  smtpHost     String?
+  smtpPort     Int?
+  credentials  String   // senha ou token encriptado
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
 }

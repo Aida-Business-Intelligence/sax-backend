@@ -84,6 +84,28 @@ function parseFooterContent(raw: string | null | undefined): Record<string, unkn
   }
 }
 
+export type TransactionTypeOption = { value: string; label: string };
+
+const DEFAULT_TRANSACTION_TYPES: TransactionTypeOption[] = [
+  { value: 'venda', label: 'Venda' },
+  { value: 'aluguel', label: 'Aluguel' },
+  { value: 'crowdfunding', label: 'Crowdfunding' },
+];
+
+function parseTransactionTypes(raw: string | null | undefined): TransactionTypeOption[] {
+  if (!raw || typeof raw !== 'string') return DEFAULT_TRANSACTION_TYPES;
+  try {
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return DEFAULT_TRANSACTION_TYPES;
+    return arr.filter((item): item is TransactionTypeOption => item != null && typeof item === 'object' && typeof (item as TransactionTypeOption).value === 'string').map((item) => ({
+      value: String((item as TransactionTypeOption).value).trim(),
+      label: typeof (item as TransactionTypeOption).label === 'string' ? String((item as TransactionTypeOption).label).trim() : String((item as TransactionTypeOption).value),
+    })).filter((item) => item.value.length > 0);
+  } catch {
+    return DEFAULT_TRANSACTION_TYPES;
+  }
+}
+
 function emptyResponse() {
   return {
     featuredPropertyIds: [] as string[],
@@ -94,6 +116,7 @@ function emptyResponse() {
     partnerLogos: [] as PartnerLogo[],
     aboutContent: null as Record<string, unknown> | null,
     footerContent: null as Record<string, unknown> | null,
+    transactionTypes: DEFAULT_TRANSACTION_TYPES,
   };
 }
 
@@ -132,6 +155,13 @@ router.get('/', async (_req, res, next) => {
       footerContentRaw = rawRows?.[0]?.footerContent ?? null;
     }
     if (footerContentRaw === undefined) footerContentRaw = null;
+    let transactionTypesRaw: string | null | undefined = (row as { transactionTypes?: string | null })?.transactionTypes;
+    if (transactionTypesRaw === undefined && row?.id) {
+      const rawRows = await prisma.$queryRaw<[{ transactionTypes: string | null }]>`
+        SELECT "transactionTypes" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+      `;
+      transactionTypesRaw = rawRows?.[0]?.transactionTypes ?? null;
+    }
     res.json({
       featuredPropertyIds,
       logoUrl: row?.logoUrl ?? null,
@@ -141,6 +171,7 @@ router.get('/', async (_req, res, next) => {
       partnerLogos: parsePartnerLogos((row as { partnerLogos?: string | null })?.partnerLogos ?? null),
       aboutContent: parseAboutContent(aboutContentRaw),
       footerContent: parseFooterContent(footerContentRaw),
+      transactionTypes: parseTransactionTypes(transactionTypesRaw ?? null),
     });
   } catch (e) {
     console.error('[site-config GET]', e);
@@ -170,6 +201,7 @@ router.put('/', async (req, res, next) => {
       partnerLogos?: PartnerLogo[] | null;
       aboutContent?: Record<string, unknown> | null;
       footerContent?: Record<string, unknown> | null;
+      transactionTypes?: TransactionTypeOption[] | null;
     };
     const featuredPropertyIdsJson =
       body.featuredPropertyIds !== undefined
@@ -219,9 +251,15 @@ router.put('/', async (req, res, next) => {
             ? JSON.stringify(body.footerContent)
             : null)
         : undefined;
+    const transactionTypesJson =
+      body.transactionTypes !== undefined
+        ? (Array.isArray(body.transactionTypes) && body.transactionTypes.length > 0
+            ? JSON.stringify(body.transactionTypes.filter((t) => t && typeof t.value === 'string'))
+            : null)
+        : undefined;
 
     const rowData = await prisma.siteConfig.findFirst({ orderBy: { updatedAt: 'desc' } });
-    type SiteConfigRow = typeof rowData & { partnerLogos?: string | null; aboutContent?: string | null; footerContent?: string | null };
+    type SiteConfigRow = typeof rowData & { partnerLogos?: string | null; aboutContent?: string | null; footerContent?: string | null; transactionTypes?: string | null };
     const prismaRaw = prisma as { $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown> };
     let row = rowData as SiteConfigRow | null;
     if (!row) {
@@ -241,6 +279,9 @@ router.put('/', async (req, res, next) => {
       }
       if (footerContentJson !== undefined) {
         await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "footerContent" = ${footerContentJson} WHERE id = ${row.id}`;
+      }
+      if (transactionTypesJson !== undefined) {
+        await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "transactionTypes" = ${transactionTypesJson} WHERE id = ${row.id}`;
       }
     } else {
       const data: Record<string, unknown> = {};
@@ -262,6 +303,9 @@ router.put('/', async (req, res, next) => {
       if (footerContentJson !== undefined) {
         await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "footerContent" = ${footerContentJson} WHERE id = ${row.id}`;
       }
+      if (transactionTypesJson !== undefined) {
+        await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "transactionTypes" = ${transactionTypesJson} WHERE id = ${row.id}`;
+      }
     }
     let outFooterContentRaw: string | null = (row as { footerContent?: string | null })?.footerContent ?? null;
     if (outFooterContentRaw === undefined && row?.id) {
@@ -273,6 +317,15 @@ router.put('/', async (req, res, next) => {
     const outFeatured = parseJsonArray(row.featuredPropertyIds);
     const outPartnerLogos = parsePartnerLogos(partnerLogosJson !== undefined ? partnerLogosJson : (row.partnerLogos ?? null));
     const outAboutContent = parseAboutContent(aboutContentJson !== undefined ? aboutContentJson : (row.aboutContent ?? null));
+    let outTransactionTypesRaw: string | null | undefined = (row as { transactionTypes?: string | null }).transactionTypes;
+    if (outTransactionTypesRaw === undefined && row?.id && transactionTypesJson !== undefined) {
+      outTransactionTypesRaw = transactionTypesJson;
+    } else if (outTransactionTypesRaw === undefined && row?.id) {
+      const rawRows = await prisma.$queryRaw<[{ transactionTypes: string | null }]>`
+        SELECT "transactionTypes" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+      `;
+      outTransactionTypesRaw = rawRows?.[0]?.transactionTypes ?? null;
+    }
     res.json({
       featuredPropertyIds: outFeatured,
       logoUrl: row.logoUrl ?? null,
@@ -282,6 +335,7 @@ router.put('/', async (req, res, next) => {
       partnerLogos: outPartnerLogos,
       aboutContent: outAboutContent,
       footerContent: parseFooterContent(footerContentJson !== undefined ? footerContentJson : outFooterContentRaw),
+      transactionTypes: parseTransactionTypes(outTransactionTypesRaw ?? null),
     });
   } catch (e) {
     console.error('[site-config PUT]', e);

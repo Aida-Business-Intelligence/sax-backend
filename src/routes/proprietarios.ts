@@ -446,13 +446,44 @@ async function create(req: import('express').Request, res: import('express').Res
       res.status(400).json({ message: 'Informe a senha provisória para criar o acesso' });
       return;
     }
+    let warehouse = await prisma.warehouse.findUnique({ where: { id: data.warehouse_id } });
+    if (!warehouse) {
+      const count = await prisma.warehouse.count();
+      if (count === 0) {
+        res.status(400).json({
+          message:
+            'Nenhuma imobiliária no banco. Rode no backend: npm run db:seed',
+        });
+        return;
+      }
+      if (count === 1) {
+        warehouse = await prisma.warehouse.findFirst();
+        if (warehouse) data.warehouse_id = warehouse.id;
+      }
+      if (!warehouse) {
+        res.status(400).json({
+          message:
+            'Imobiliária não encontrada. Selecione a imobiliária no topo da página ou rode: npm run db:seed',
+        });
+        return;
+      }
+    }
     const row = await insertOwner(data, {
       forceOrigem: data.origem ?? undefined,
     });
     res.status(201).json(formatProprietario(row));
   } catch (error) {
     console.error('Erro ao criar proprietário:', error);
-    res.status(500).json({ message: 'Erro ao criar proprietário' });
+    const message =
+      error instanceof Error ? error.message : 'Erro ao criar proprietário';
+    const isFk =
+      message.includes('foreign key') ||
+      message.includes('violates foreign key constraint');
+    res.status(500).json({
+      message: isFk
+        ? 'Imobiliária não encontrada. Rode no backend: npm run db:seed'
+        : 'Erro ao criar proprietário',
+    });
   }
 }
 

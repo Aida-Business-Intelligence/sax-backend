@@ -16,6 +16,15 @@ import tagsRoutes from './routes/tags.js';
 import propertiesPublicRoutes from './routes/properties-public.js';
 import propriedadesRoutes from './routes/propriedades.js';
 import siteConfigRoutes from './routes/site-config.js';
+import blogRoutes from './routes/blog.js';
+import analyticsRoutes from './routes/analytics.js';
+import trackingRoutes from './routes/tracking.js';
+import automationsRoutes from './routes/automations.js';
+import foldersRoutes from './routes/folders.js';
+import filesRoutes from './routes/files.js';
+import fileStorageRoutes from './routes/file-storage.js';
+import integrationsRoutes from './routes/integrations.js';
+import mailRoutes from './routes/mail.js';
 
 const app = express();
 
@@ -31,11 +40,15 @@ app.use(express.json());
 // Arquivos enviados (imagens de imóveis, logos, etc.)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
+// Rate limit: em dev mais alto para não travar; em produção protege o servidor
+const isDev = config.nodeEnv === 'development';
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 200,
+    max: isDev ? 2000 : 500,
     message: { success: false, message: 'Muitas requisições. Tente novamente em alguns minutos.' },
+    standardHeaders: true,
+    legacyHeaders: false,
   })
 );
 
@@ -51,6 +64,15 @@ app.use('/api/tags', tagsRoutes);
 app.use('/api/properties', propertiesPublicRoutes);
 app.use('/api/propriedades', propriedadesRoutes);
 app.use('/api/site-config', siteConfigRoutes);
+app.use('/api/blog', blogRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/tracking', trackingRoutes);
+app.use('/api/automations', automationsRoutes);
+app.use('/api/folders', foldersRoutes);
+app.use('/api/files', filesRoutes);
+app.use('/api/file_storage', fileStorageRoutes);
+app.use('/api/integrations', integrationsRoutes);
+app.use('/api/mail', mailRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'sax-backend' });
