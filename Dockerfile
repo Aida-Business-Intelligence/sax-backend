@@ -20,8 +20,12 @@ RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 appuser
 
 COPY package*.json ./
-# Instala apenas deps de produção (prisma CLI é devDep — não disponível aqui, e não precisa)
+# Instala apenas deps de produção
 RUN npm ci --omit=dev
+# Copia o CLI do Prisma do builder (necessário para migrate deploy)
+COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
 # Copia o client já gerado no builder (binários nativos do Alpine)
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY prisma ./prisma
@@ -30,6 +34,9 @@ COPY --from=builder /app/dist ./dist
 
 RUN mkdir -p uploads && chown -R appuser:nodejs uploads
 
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x entrypoint.sh
+
 USER appuser
 EXPOSE 4000
-CMD ["node", "dist/server.js"]
+ENTRYPOINT ["./entrypoint.sh"]
