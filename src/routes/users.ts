@@ -174,7 +174,7 @@ async function update(req: Request, res: Response) {
     if (b.password && String(b.password).trim().length >= 6) {
       data.password = await bcrypt.hash(String(b.password).trim(), 10);
     }
-    const toUpdate = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
+    const toUpdate = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as typeof data;
     if (Object.keys(toUpdate).length === 0) {
       res.json({ data: existing, status: true });
       return;

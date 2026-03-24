@@ -310,6 +310,7 @@ router.get('/list', async (req: Request, res: Response) => {
       { envelope: true, uid: true, flags: true }
     )) {
       const env = msg.envelope;
+      if (!env) continue;
       messages.push({
         id: String(msg.uid),
         from: {
@@ -405,6 +406,7 @@ router.get('/details', async (req: Request, res: Response) => {
       { envelope: true, uid: true, flags: true, source: true }
     )) {
       const env = msg.envelope;
+      if (!env) continue;
       let text = '';
       let html = '';
       if (msg.source) {

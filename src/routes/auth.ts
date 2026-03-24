@@ -58,7 +58,7 @@ router.post('/data', async (req, res, next) => {
     const token = jwt.sign(
       { userId: user.id },
       config.jwtSecret,
-      { expiresIn: config.jwtExpiresIn }
+      { expiresIn: config.jwtExpiresIn as import('ms').StringValue }
     );
 
     const permissions = (user.role.permissions && JSON.parse(user.role.permissions)) ?? [];

@@ -243,7 +243,7 @@ router.get('/visitors', authMiddleware, async (req, res, next) => {
           }
         : null,
     }));
-    list.sort((a, b) => (b.lead?.score ?? 0) - (a.lead?.score ?? 0));
+    list.sort((a: typeof list[number], b: typeof list[number]) => (b.lead?.score ?? 0) - (a.lead?.score ?? 0));
     return res.json(list);
   } catch (e) {
     next(e);

@@ -176,7 +176,7 @@ router.get('/next-ref', async (req, res, next) => {
 
 router.get('/next-ref/', (req, res, next) => {
   req.url = '/next-ref';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /**
@@ -225,7 +225,7 @@ router.post('/list', async (req, res, next) => {
 
 router.post('/list/', (req, res, next) => {
   req.url = '/list';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /**
@@ -448,7 +448,7 @@ router.post('/create', async (req, res, next) => {
 
 router.post('/create/', (req, res, next) => {
   req.url = '/create';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /**
@@ -571,7 +571,7 @@ router.put('/update/:id', async (req, res, next) => {
 
 router.put('/update/:id/', (req, res, next) => {
   req.url = req.url.replace(/\/$/, '');
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /**
@@ -602,7 +602,7 @@ router.post('/remove', async (req, res, next) => {
 
 router.post('/remove/', (req, res, next) => {
   req.url = '/remove';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 export default router;

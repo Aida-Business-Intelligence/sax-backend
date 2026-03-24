@@ -39,7 +39,7 @@ router.put('/upload/:type/:warehouseId', (req: Request, res: Response) => {
       return;
     }
 
-    const parts = buffer.split(`--${boundary}`).filter((p) => p.length > 0 && !p.toString().endsWith('--\r\n'));
+    const parts = buffer.toString('binary').split(`--${boundary}`).map((s) => Buffer.from(s, 'binary')).filter((p: Buffer) => p.length > 0 && !p.toString().endsWith('--\r\n'));
     let fileBuffer: Buffer | null = null;
     let filename = '';
 

@@ -11,6 +11,11 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       CORS_ORIGIN: ${CORS_ORIGIN}
+      SAX_API_URL: ${SAX_API_URL}
+      SAX_FRONT_URL: ${SAX_FRONT_URL}
+      DROPBOX_CLIENT_ID: ${DROPBOX_CLIENT_ID:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
     volumes:
       - uploads:/app/uploads
     depends_on:
