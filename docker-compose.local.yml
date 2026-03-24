@@ -1,0 +1,65 @@
+# Compose para desenvolvimento LOCAL — builda a imagem do Dockerfile local.
+# NÃO usa imagem do DockerHub. NÃO tem Watchtower.
+#
+# Uso:
+#   docker compose -f docker-compose.local.yml up --build
+#   docker compose -f docker-compose.local.yml down
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "4000:4000"           # exposto direto (sem bind a 127.0.0.1)
+    environment:
+      NODE_ENV: development
+      PORT: "4000"
+      DATABASE_URL: postgresql://sax:dev123@postgres:5432/sax
+      JWT_SECRET: dev-secret-nao-usar-em-producao
+      JWT_EXPIRES_IN: 7d
+      CORS_ORIGIN: http://localhost:3031,http://localhost:3000
+      SAX_API_URL: http://localhost:4000
+      SAX_FRONT_URL: http://localhost:3031
+      DROPBOX_CLIENT_ID: ""
+      GOOGLE_CLIENT_ID: ""
+      MICROSOFT_CLIENT_ID: ""
+    volumes:
+      - uploads-local:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"           # exposto para conectar com DBeaver/pgAdmin local
+    environment:
+      POSTGRES_USER: sax
+      POSTGRES_PASSWORD: dev123
+      POSTGRES_DB: sax
+    volumes:
+      - pgdata-local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sax"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    ports:
+      - "5050:80"             # acesso via http://localhost:5050
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+      SCRIPT_NAME: ""         # sem subpath no local
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata-local:
+  uploads-local:
