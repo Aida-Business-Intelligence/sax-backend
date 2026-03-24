@@ -51,18 +51,6 @@ services:
     depends_on:
       - postgres
 
-  watchtower:
-    image: containrrr/watchtower:latest
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      WATCHTOWER_POLL_INTERVAL: "300"
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_LABEL_ENABLE: "true"
-      REPO_USER: ${DOCKERHUB_USERNAME}
-      REPO_PASS: ${DOCKERHUB_TOKEN}
-
 volumes:
   pgdata:
   uploads:
