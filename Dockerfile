@@ -32,7 +32,12 @@ COPY prisma ./prisma
 
 COPY --from=builder /app/dist ./dist
 
-RUN mkdir -p uploads && chown -R appuser:nodejs uploads
+RUN mkdir -p uploads && chown -R appuser:nodejs uploads \
+ && chown -R appuser:nodejs \
+      node_modules/@prisma \
+      node_modules/.prisma \
+      node_modules/prisma \
+      node_modules/.bin/prisma
 
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh
