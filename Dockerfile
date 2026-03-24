@@ -20,20 +20,23 @@ RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 appuser
 
 COPY package*.json ./
-# Instala apenas deps de produção
 RUN npm ci --omit=dev
-# Copia o CLI do Prisma do builder (necessário para migrate deploy)
+
+# Copia CLI do Prisma (é devDependency, não vem no npm ci --omit=dev)
 COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
-# Copia o client já gerado no builder (binários nativos do Alpine)
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY prisma ./prisma
+
+# Regenera o Prisma Client NESTA stage (runner) — garante que os
+# binários do engine correspondem EXATAMENTE a esta plataforma Alpine.
+# Roda como root, então tem permissão de escrita e detecção de OpenSSL funciona.
+RUN npx prisma generate
 
 COPY --from=builder /app/dist ./dist
 
-RUN mkdir -p uploads && chown -R appuser:nodejs uploads \
- && chown -R appuser:nodejs \
+RUN mkdir -p uploads \
+ && chown -R appuser:nodejs uploads \
       node_modules/@prisma \
       node_modules/.prisma \
       node_modules/prisma \
