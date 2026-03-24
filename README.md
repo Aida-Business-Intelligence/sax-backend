@@ -2,61 +2,69 @@
 
 Backend da aplicação SAX: usuários, login, lojas (warehouses) e imóveis. Compatível com **sax-frontend-pdv** (painel admin) e **sax-site-front** (site imobiliário).
 
-- **Stack:** Node.js, TypeScript, Express, Prisma, PostgreSQL
-- **Auth:** JWT; login compatível com a tela de signin do PDV (e-mail, senha, seleção de loja).
+- **Stack:** Node.js 20, TypeScript, Express, Prisma 5, PostgreSQL 16
+- **Auth:** JWT; login compatível com a tela de signin do PDV (e-mail, senha, seleção de loja)
+- **Imagem Docker:** `aidabusiness/sax-backend` (:latest | :dev)
 
-## Rotas principais (compatíveis com o PDV)
+## Rotas principais
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | POST | `/api/auth/data` | Login. Body: `{ email, password, warehouse_id }`. Retorna `{ success, token, user }` com `user.roles` e `user.warehouse`. |
-| GET | `/api/warehouse/list` ou `/api/warehouse/list/` | Lista lojas (para o select do login e módulo warehouse). |
+| GET | `/api/warehouse/list` | Lista lojas (para o select do login e módulo warehouse). |
 
-## Setup
-
-1. **Requisitos:** Node 18+, PostgreSQL.
-
-2. **Instalar dependências e configurar env:**
+## Setup local
 
 ```bash
-cd sax-backend
 npm install
 cp .env.example .env
-```
-
-3. **Editar `.env`:**  
-   - `DATABASE_URL`: connection string do PostgreSQL (ex.: `postgresql://usuario:senha@localhost:5432/sax`).  
-   - `JWT_SECRET`: segredo forte em produção (ex.: `openssl rand -base64 32`).  
-   - `CORS_ORIGIN`: origens permitidas (ex.: `http://localhost:3031` para o PDV).
-
-4. **Criar banco e rodar seed:**
-
-```bash
+# editar .env com suas credenciais do PostgreSQL
 npx prisma generate
 npx prisma db push
 npm run db:seed
+npm run dev  # http://localhost:4000
 ```
 
-5. **Subir o servidor:**
+### Variáveis de ambiente (`.env.example`)
+
+| Variável | Descrição |
+|----------|-----------|
+| `DATABASE_URL` | Connection string PostgreSQL |
+| `JWT_SECRET` | Segredo para assinar tokens (produção: `openssl rand -base64 32`) |
+| `JWT_EXPIRES_IN` | Validade do token (padrão: `7d`) |
+| `CORS_ORIGIN` | Origens permitidas, separadas por vírgula |
+
+## Docker
 
 ```bash
-npm run dev
+# Build local
+docker build -t sax-backend .
+
+# Subir a stack completa (API + PostgreSQL + pgAdmin)
+docker compose up -d
 ```
 
-O backend sobe em `http://localhost:4000` (ou na `PORT` do `.env`).
+A stack inclui:
 
-## Login no PDV (sax-frontend-pdv)
+| Serviço | Porta | Descrição |
+|---------|-------|-----------|
+| `api` | `4000` | Backend Express |
+| `postgres` | `5432` (interna) | PostgreSQL 16 Alpine |
+| `pgadmin` | `5050` | pgAdmin 4 em `/db/` |
+| `watchtower` | — | Auto-deploy: detecta novas imagens no DockerHub |
 
-Após o backend estar no ar:
+## CI/CD
 
-1. No **sax-frontend-pdv**, configure o env para apontar para o sax-backend:
-   - `NEXT_PUBLIC_AUTH_URL_LOCAL=http://localhost:4000`  
-   (a tela de login chama `NEXT_PUBLIC_AUTH_URL_LOCAL + '/api/auth/data'` e `.../api/warehouse/list/`).
+Push para `main` → CI builda `aidabusiness/sax-backend:latest` → Watchtower atualiza o container em produção.
+Push para `develop` → CI builda `aidabusiness/sax-backend:dev` → Watchtower atualiza homologação.
 
-2. Usuário padrão criado pelo seed:
-   - **E-mail:** `admin@sax.com`  
-   - **Senha:** `admin123`  
-   - **Loja:** selecione "001 - SAX NEGÓCIOS" no dropdown e faça login.
+## Login no PDV
+
+Após o backend estar no ar, no **sax-frontend-pdv** configure:
+
+- `NEXT_PUBLIC_AUTH_URL_LOCAL=http://localhost:4000`
+
+Usuário seed: `admin@sax.com` / `admin123` / loja "001 - SAX NEGÓCIOS".
 
 Assim o cadastro e o login refletem no front do painel (account, warehouse e demais módulos que usarem essa API).
 

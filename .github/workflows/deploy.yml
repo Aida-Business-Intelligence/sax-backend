@@ -1,0 +1,45 @@
+name: Deploy SAX Backend
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+env:
+  IMAGE_NAME: aidabusiness/sax-backend
+
+jobs:
+  # ──────────────── BUILD & PUSH ────────────────
+  build:
+    name: Build e Push Imagem Docker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Definir tag da imagem
+        id: tag
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "TAG=latest" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }}
+
+  # O deploy é feito automaticamente pelo Watchtower,
+  # que detecta a nova imagem no DockerHub e reinicia o container.
