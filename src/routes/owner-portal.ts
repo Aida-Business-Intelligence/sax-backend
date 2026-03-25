@@ -1,21 +1,54 @@
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'crypto';
 import { Router } from 'express';
+import multer from 'multer';
+import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { ownerAuth, type OwnerRequest } from '../middleware/ownerAuth.js';
 import {
   getNextRef,
   lockWarehouseForRefAllocation,
   assertRefAvailableInWarehouse,
   buildPropertySlugBase,
 } from '../lib/property-ref.js';
+import { formatPropriedade, slugify } from './propriedades.js';
 import { buildGeoAddressKey, geocodeBrazilAddress } from '../lib/geocode.js';
 import { buildPropertyListWhere } from '../lib/property-list-filters.js';
+import { publicUploadUrl } from '../lib/public-asset-url.js';
+import { attachHelpdeskOwnerRoutes } from './helpdesk-owner.js';
 
 const router = Router();
 
 const UPLOAD_PROPERTIES_DIR = path.join(process.cwd(), 'uploads', 'properties');
+const UPLOAD_AVATARS_DIR = path.join(process.cwd(), 'uploads', 'proprietarios', 'avatars');
 const ALLOWED_IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+
+if (!fs.existsSync(UPLOAD_AVATARS_DIR)) {
+  fs.mkdirSync(UPLOAD_AVATARS_DIR, { recursive: true });
+}
+
+const avatarStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_AVATARS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const safeExt = ALLOWED_IMAGE_EXT.includes(ext) ? ext : '.jpg';
+    cb(null, `${Date.now()}-${randomUUID()}${safeExt}`);
+  },
+});
+const avatarUpload = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (ALLOWED_IMAGE_EXT.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Use uma imagem (.png, .jpg, .jpeg, .gif ou .webp)'));
+    }
+  },
+});
 
 function ensurePropertyUploadDir(propertyId: string) {
   const dir = path.join(UPLOAD_PROPERTIES_DIR, propertyId);
@@ -25,261 +58,391 @@ function ensurePropertyUploadDir(propertyId: string) {
   return dir;
 }
 
-export { getNextRef } from '../lib/property-ref.js';
+router.use(ownerAuth);
 
-export function slugify(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
+function ownerId(req: OwnerRequest) {
+  return String(req.ownerId ?? '');
 }
 
-function parseTransactionTypes(raw: string | null | undefined): string[] {
-  if (!raw) return [];
+function parsePrivacyJson(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
   try {
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.map(String) : [];
+    return JSON.parse(raw) as Record<string, unknown>;
   } catch {
-    return [];
+    return null;
   }
 }
 
-function parseJsonArray(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  try {
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function formatPropriedade(p: {
+function formatOwnerMe(row: {
   id: string;
-  ref: string | null;
-  slug: string;
-  title: string;
-  description: string | null;
-  type: string;
-  transactionTypes?: string | null;
-  status: string;
-  propertyType: string | null;
-  price: Prisma.Decimal | null;
-  priceVenda?: Prisma.Decimal | null;
-  priceAluguel?: Prisma.Decimal | null;
-  priceCrowdfunding?: Prisma.Decimal | null;
-  area: Prisma.Decimal | null;
-  bedrooms: number | null;
-  suites?: number | null;
-  demiSuites?: number | null;
-  bathrooms: number | null;
-  garage: number | null;
-  address: string | null;
-  numero?: string | null;
-  neighborhood: string | null;
-  city: string | null;
-  state: string | null;
-  zip: string | null;
-  builder?: string | null;
-  warehouseId: string;
-  proprietarioId?: string | null;
-  comodidades?: string | null;
-  mobiliado?: boolean | null;
-  aceita_pets?: boolean | null;
-  aceita_permuta?: boolean | null;
-  em_construcao?: boolean | null;
-  parceria?: boolean | null;
-  dataPrevistaEntrega?: Date | null;
-  tagImovel?: string | null;
-  latitude?: Prisma.Decimal | null;
-  longitude?: Prisma.Decimal | null;
-  ownerSubmissionStatus?: string | null;
+  nome: string;
+  email: string | null;
+  access_email: string | null;
+  subdomain: string | null;
+  telefone: string | null;
+  tipo_documento: string | null;
+  cpf_cnpj: string | null;
+  cep: string | null;
+  endereco: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  estado: string | null;
+  observacoes: string | null;
+  fotoUrl: string | null;
+  warehouse_id: string;
+  must_change_password: boolean;
+  privacyJson: string | null;
 }) {
-  const tipoTransacao = parseTransactionTypes(p.transactionTypes);
-  const types = tipoTransacao.length > 0 ? tipoTransacao : (p.type ? [p.type] : []);
-  /** Valor exibido na lista: prioridade Venda → Locação → Crowdfunding → price legado */
-  const mainPrice =
-    p.priceVenda != null
-      ? p.priceVenda
-      : p.priceAluguel != null
-        ? p.priceAluguel
-        : p.priceCrowdfunding != null
-          ? p.priceCrowdfunding
-          : p.price ?? null;
   return {
-    id: p.id,
-    ref: p.ref ?? '',
-    titulo: p.title,
-    tipo_imovel: p.propertyType ?? '',
-    tipo_imovel_nome: p.propertyType ?? '',
-    tipo_transacao: types,
-    status: p.status === 'published' ? 'ativo' : p.status === 'draft' ? 'ativo' : p.status,
-    ativo: p.status === 'published' || p.status === 'draft',
-    valor: mainPrice != null ? Number(mainPrice) : null,
-    preco: mainPrice != null ? Number(mainPrice) : null,
-    preco_venda: p.priceVenda != null ? Number(p.priceVenda) : null,
-    preco_aluguel: p.priceAluguel != null ? Number(p.priceAluguel) : null,
-    preco_crowdfunding: p.priceCrowdfunding != null ? Number(p.priceCrowdfunding) : null,
-    area_m2: p.area != null ? Number(p.area) : null,
-    area_total: p.area != null ? Number(p.area) : null,
-    quartos: p.bedrooms ?? null,
-    suites: p.suites ?? null,
-    demi_suites: p.demiSuites ?? null,
-    banheiros: p.bathrooms ?? null,
-    vagas_garagem: p.garage ?? null,
-    endereco: p.address ?? '',
-    numero: p.numero ?? '',
-    bairro: p.neighborhood ?? '',
-    cidade: p.city ?? '',
-    estado: p.state ?? '',
-    cep: p.zip ?? '',
-    descricao: p.description ?? '',
-    construtora: p.builder ?? '',
-    warehouse_id: p.warehouseId,
-    proprietario: p.proprietarioId ?? null,
-    comodidades: parseJsonArray(p.comodidades),
-    mobiliado: p.mobiliado ?? false,
-    aceita_pets: p.aceita_pets ?? false,
-    aceita_permuta: p.aceita_permuta ?? false,
-    em_construcao: p.em_construcao ?? false,
-    parceria: p.parceria ?? false,
-    data_prevista_entrega: p.dataPrevistaEntrega ? p.dataPrevistaEntrega.toISOString().slice(0, 10) : null,
-    tag_imovel: parseJsonArray(p.tagImovel),
-    latitude: p.latitude != null ? Number(p.latitude) : null,
-    longitude: p.longitude != null ? Number(p.longitude) : null,
-    owner_submission_status: p.ownerSubmissionStatus ?? null,
+    id: row.id,
+    nome: row.nome,
+    email: row.email,
+    access_email: row.access_email,
+    subdomain: row.subdomain,
+    telefone: row.telefone,
+    tipo_documento: row.tipo_documento,
+    cpf_cnpj: row.cpf_cnpj,
+    cep: row.cep,
+    endereco: row.endereco,
+    numero: row.numero,
+    complemento: row.complemento,
+    bairro: row.bairro,
+    cidade: row.cidade,
+    estado: row.estado,
+    observacoes: row.observacoes,
+    foto_url: publicUploadUrl(row.fotoUrl),
+    warehouse_id: row.warehouse_id,
+    must_change_password: row.must_change_password,
+    privacy: parsePrivacyJson(row.privacyJson),
   };
 }
 
-/**
- * GET /api/propriedades/next-ref?warehouse_id=xxx - Retorna a próxima referência (ex: REF-00001) para exibir no formulário de nova propriedade.
- */
-router.get('/next-ref', async (req, res, next) => {
+/** GET /api/proprietarios/portal/me */
+router.get('/me', async (req, res) => {
   try {
-    const warehouseId = (req.query.warehouse_id ?? req.query.warehouseId) as string | undefined;
-    if (!warehouseId) {
-      res.status(400).json({ message: 'warehouse_id é obrigatório' });
+    const id = ownerId(req);
+    const row = await prisma.proprietario.findUnique({ where: { id } });
+    if (!row) {
+      res.status(404).json({ message: 'Proprietário não encontrado' });
       return;
     }
-    const ref = await getNextRef(warehouseId);
-    res.json({ ref });
+    res.json(formatOwnerMe(row));
   } catch (e) {
-    next(e);
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao carregar perfil' });
   }
 });
 
-router.get('/next-ref/', (req, res, next) => {
-  req.url = '/next-ref';
+router.get('/me/', (req, res, next) => {
+  req.url = '/me';
   (router as any).handle(req, res, next);
 });
 
-/**
- * POST /api/propriedades/list/ - Lista propriedades (body: warehouse_id, page, pageSize, search).
- */
-router.post('/list', async (req, res, next) => {
+/** PATCH /api/proprietarios/portal/me */
+router.patch('/me', async (req, res) => {
   try {
+    const id = ownerId(req);
     const body = req.body as Record<string, unknown>;
-    const warehouseId = body.warehouse_id ?? body.warehouseId;
-    if (!warehouseId || typeof warehouseId !== 'string') {
-      res.status(400).json({ message: 'warehouse_id é obrigatório' });
+    const data: Prisma.ProprietarioUpdateInput = {};
+
+    if (typeof body.nome === 'string') data.nome = body.nome.trim();
+    if (typeof body.telefone === 'string') data.telefone = body.telefone.trim() || null;
+    if (typeof body.tipo_documento === 'string') data.tipo_documento = body.tipo_documento.trim() || null;
+    if (typeof body.cpf_cnpj === 'string') data.cpf_cnpj = body.cpf_cnpj.trim() || null;
+    if (typeof body.cep === 'string') data.cep = body.cep.trim() || null;
+    if (typeof body.endereco === 'string') data.endereco = body.endereco.trim() || null;
+    if (typeof body.numero === 'string') data.numero = body.numero.trim() || null;
+    if (typeof body.complemento === 'string') data.complemento = body.complemento.trim() || null;
+    if (typeof body.bairro === 'string') data.bairro = body.bairro.trim() || null;
+    if (typeof body.cidade === 'string') data.cidade = body.cidade.trim() || null;
+    if (typeof body.estado === 'string') data.estado = body.estado.trim() || null;
+    if (typeof body.observacoes === 'string') data.observacoes = body.observacoes.trim() || null;
+    if (body.privacy !== undefined && body.privacy !== null && typeof body.privacy === 'object') {
+      data.privacyJson = JSON.stringify(body.privacy);
+    }
+
+    const row = await prisma.proprietario.update({
+      where: { id },
+      data,
+    });
+    res.json(formatOwnerMe(row));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao atualizar perfil' });
+  }
+});
+
+router.patch('/me/', (req, res, next) => {
+  req.url = '/me';
+  (router as any).handle(req, res, next);
+});
+
+/** POST /api/proprietarios/portal/me/avatar — multipart campo "file" (máx. 3 MB) */
+router.post('/me/avatar', (req, res) => {
+  avatarUpload.single('file')(req, res, async (err: unknown) => {
+    if (err) {
+      const msg = err instanceof Error ? err.message : 'Upload inválido';
+      res.status(400).json({ message: msg });
       return;
     }
-    const page = Math.max(1, Number(body.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(body.pageSize) || 25));
+    try {
+      const id = ownerId(req as OwnerRequest);
+      const file = (req as OwnerRequest & { file?: Express.Multer.File }).file;
+      if (!file) {
+        res.status(400).json({ message: 'Envie um arquivo (campo file)' });
+        return;
+      }
+      const current = await prisma.proprietario.findUnique({ where: { id } });
+      if (!current) {
+        res.status(404).json({ message: 'Proprietário não encontrado' });
+        return;
+      }
+      if (current.fotoUrl?.startsWith('/uploads/proprietarios/avatars/')) {
+        const oldPath = path.join(process.cwd(), current.fotoUrl.replace(/^\//, ''));
+        try {
+          if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        } catch {
+          /* ignore */
+        }
+      }
+      const relativeUrl = `/uploads/proprietarios/avatars/${file.filename}`;
+      const row = await prisma.proprietario.update({
+        where: { id },
+        data: { fotoUrl: relativeUrl },
+      });
+      res.json(formatOwnerMe(row));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ message: 'Erro ao salvar foto' });
+    }
+  });
+});
 
-    const where = buildPropertyListWhere(
-      { warehouseId },
-      {
-        search: typeof body.search === 'string' ? body.search : undefined,
-        ref: typeof body.ref === 'string' ? body.ref : undefined,
-        transactionType:
-          typeof body.transactionType === 'string' ? body.transactionType : undefined,
-        propertyType: typeof body.propertyType === 'string' ? body.propertyType : undefined,
-        state: typeof body.state === 'string' ? body.state : undefined,
-      },
-    );
+/** DELETE /api/proprietarios/portal/me/avatar */
+router.delete('/me/avatar', async (req, res) => {
+  try {
+    const id = ownerId(req);
+    const current = await prisma.proprietario.findUnique({ where: { id } });
+    if (!current) {
+      res.status(404).json({ message: 'Proprietário não encontrado' });
+      return;
+    }
+    if (current.fotoUrl?.startsWith('/uploads/proprietarios/avatars/')) {
+      const oldPath = path.join(process.cwd(), current.fotoUrl.replace(/^\//, ''));
+      try {
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      } catch {
+        /* ignore */
+      }
+    }
+    const row = await prisma.proprietario.update({
+      where: { id },
+      data: { fotoUrl: null },
+    });
+    res.json(formatOwnerMe(row));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao remover foto' });
+  }
+});
 
-    const [list, total] = await Promise.all([
-      prisma.property.findMany({
-        where,
-        orderBy: [{ ref: 'asc' }, { createdAt: 'desc' }],
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      prisma.property.count({ where }),
-    ]);
+/** PATCH /api/proprietarios/portal/me/password */
+router.patch('/me/password', async (req, res) => {
+  try {
+    const id = ownerId(req);
+    const body = req.body as { currentPassword?: string; newPassword?: string };
+    const current = typeof body.currentPassword === 'string' ? body.currentPassword : '';
+    const next = typeof body.newPassword === 'string' ? body.newPassword : '';
+    if (next.length < 6) {
+      res.status(400).json({ message: 'A nova senha deve ter ao menos 6 caracteres' });
+      return;
+    }
+    const row = await prisma.proprietario.findUnique({ where: { id } });
+    if (!row?.password_hash) {
+      res.status(400).json({ message: 'Senha atual não configurada' });
+      return;
+    }
+    const ok = await bcrypt.compare(current, row.password_hash);
+    if (!ok) {
+      res.status(400).json({ message: 'Senha atual incorreta' });
+      return;
+    }
+    const password_hash = await bcrypt.hash(next, 10);
+    await prisma.proprietario.update({
+      where: { id },
+      data: { password_hash, must_change_password: false },
+    });
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao alterar senha' });
+  }
+});
 
-    const ownerIds = [...new Set(list.map((p) => p.proprietarioId).filter((id): id is string => Boolean(id)))];
-    const owners =
-      ownerIds.length > 0
-        ? await prisma.proprietario.findMany({
-            where: { id: { in: ownerIds } },
-            select: { id: true, nome: true },
-          })
-        : [];
-    const ownerNomeById = new Map(owners.map((o) => [o.id, o.nome]));
+router.patch('/me/password/', (req, res, next) => {
+  req.url = '/me/password';
+  (router as any).handle(req, res, next);
+});
+
+/** GET /api/proprietarios/portal/dashboard */
+router.get('/dashboard', async (req, res) => {
+  try {
+    const oid = ownerId(req);
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const props = await prisma.property.findMany({
+      where: { proprietarioId: oid },
+      select: { id: true, slug: true, status: true, ownerSubmissionStatus: true },
+    });
+    const slugs = props.map((p) => p.slug).filter(Boolean);
+    let viewsLast30 = 0;
+    if (slugs.length > 0) {
+      const raw = await prisma.$queryRaw<Array<{ c: bigint }>>`
+        SELECT COUNT(*)::bigint AS c
+        FROM "SiteAnalyticsEvent" e
+        WHERE e."eventType" = 'property_view'
+          AND e."createdAt" >= ${since}
+          AND e.payload IS NOT NULL
+          AND (e.payload::jsonb->>'propertySlug') IN (${Prisma.join(slugs)})
+      `;
+      viewsLast30 = Number(raw[0]?.c ?? 0);
+    }
 
     res.json({
-      data: list.map((p) => ({
-        ...formatPropriedade(p),
-        proprietario_nome: p.proprietarioId ? ownerNomeById.get(p.proprietarioId) ?? null : null,
-      })),
-      total,
+      totalImoveis: props.length,
+      pendentesAprovacao: props.filter((p) => p.ownerSubmissionStatus === 'pending').length,
+      publicados: props.filter((p) => p.status === 'published').length,
+      viewsUltimos30Dias: viewsLast30,
     });
   } catch (e) {
-    next(e);
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao carregar métricas' });
   }
 });
 
-router.post('/list/', (req, res, next) => {
-  req.url = '/list';
+router.get('/dashboard/', (req, res, next) => {
+  req.url = '/dashboard';
+  (router as any).handle(req, res, next);
+});
+
+/** GET /api/proprietarios/portal/reports?from=ISO&to=ISO */
+router.get('/reports', async (req, res) => {
+  try {
+    const oid = ownerId(req);
+    const q = req.query as { from?: string; to?: string };
+    const to = q.to ? new Date(q.to) : new Date();
+    const from = q.from ? new Date(q.from) : new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      res.status(400).json({ message: 'Datas inválidas' });
+      return;
+    }
+
+    const props = await prisma.property.findMany({
+      where: { proprietarioId: oid },
+      select: { id: true, slug: true },
+    });
+    const slugs = props.map((p) => p.slug);
+    const ids = props.map((p) => p.id);
+
+    const visits =
+      slugs.length === 0
+        ? []
+        : await prisma.$queryRaw<Array<{ day: Date; count: bigint }>>`
+          SELECT DATE_TRUNC('day', e."createdAt") AS day, COUNT(*)::bigint AS count
+          FROM "SiteAnalyticsEvent" e
+          WHERE e."eventType" = 'property_view'
+            AND e."createdAt" >= ${from}
+            AND e."createdAt" <= ${to}
+            AND e.payload IS NOT NULL
+            AND (e.payload::jsonb->>'propertySlug') IN (${Prisma.join(slugs)})
+          GROUP BY 1
+          ORDER BY 1 ASC
+        `;
+
+    let leads: Array<{ day: Date; count: bigint }> = [];
+    if (slugs.length > 0 || ids.length > 0) {
+      const orParts: Prisma.Sql[] = [];
+      if (slugs.length > 0) {
+        orParts.push(Prisma.sql`(l.metadata::jsonb->>'propertySlug') IN (${Prisma.join(slugs)})`);
+      }
+      if (ids.length > 0) {
+        orParts.push(Prisma.sql`(l.metadata::jsonb->>'propertyId') IN (${Prisma.join(ids)})`);
+      }
+      const orSql = orParts.length === 1 ? orParts[0]! : Prisma.sql`(${Prisma.join(orParts, ' OR ')})`;
+      leads = await prisma.$queryRaw<Array<{ day: Date; count: bigint }>>`
+        SELECT DATE_TRUNC('day', l."createdAt") AS day, COUNT(*)::bigint AS count
+        FROM "SiteLead" l
+        WHERE l."createdAt" >= ${from}
+          AND l."createdAt" <= ${to}
+          AND l.metadata IS NOT NULL
+          AND (${orSql})
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `;
+    }
+
+    res.json({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      visitsByDay: visits.map((r) => ({
+        date: new Date(r.day).toISOString().slice(0, 10),
+        count: Number(r.count),
+      })),
+      leadsByDay: leads.map((r) => ({
+        date: new Date(r.day).toISOString().slice(0, 10),
+        count: Number(r.count),
+      })),
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao carregar relatórios' });
+  }
+});
+
+router.get('/reports/', (req, res, next) => {
+  req.url = '/reports';
+  (router as any).handle(req, res, next);
+});
+
+/** GET /api/proprietarios/portal/properties — query: search, ref, transactionType, propertyType, state */
+router.get('/properties', async (req, res) => {
+  try {
+    const oid = ownerId(req);
+    const q = req.query as Record<string, string | undefined>;
+    const where = buildPropertyListWhere(
+      { proprietarioId: oid },
+      {
+        search: q.search,
+        ref: q.ref,
+        transactionType: q.transactionType,
+        propertyType: q.propertyType,
+        state: q.state,
+      },
+    );
+    const list = await prisma.property.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }],
+    });
+    res.json({ data: list.map(formatPropriedade) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao listar imóveis' });
+  }
+});
+
+router.get('/properties/', (req, res, next) => {
+  req.url = '/properties';
   (router as any).handle(req, res, next);
 });
 
 /**
- * GET /api/propriedades/get/:id - Obtém uma propriedade para edição.
+ * POST /api/proprietarios/portal/properties/:propertyId/upload
+ * Mesmo contrato de /api/propriedades/upload/:propertyId (multipart "file"), só para imóvel do proprietário logado.
  */
-async function getOne(req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) {
-  try {
-    const id = req.params.id;
-    if (!id) {
-      res.status(400).json({ message: 'ID é obrigatório' });
-      return;
-    }
-    const p = await prisma.property.findUnique({
-      where: { id },
-      include: {
-        sections: { select: { sectionId: true } },
-        media: { orderBy: { sortOrder: 'asc' } },
-      },
-    });
-    if (!p) {
-      res.status(404).json({ message: 'Propriedade não encontrada' });
-      return;
-    }
-    const formatted = formatPropriedade(p) as Record<string, unknown>;
-    formatted.section_ids = p.sections?.map((s) => s.sectionId) ?? [];
-    formatted.media = (p.media ?? []).map((m) => ({ id: m.id, url: m.url, sortOrder: m.sortOrder }));
-    formatted.anexos = (p.media ?? []).map((m) => m.url);
-    formatted.imagem_capa_index = 0;
-    res.json(formatted);
-  } catch (e) {
-    next(e);
-  }
-}
-
-router.get('/get/:id', getOne);
-router.get('/get/:id/', getOne);
-
-/**
- * POST /api/propriedades/upload/:propertyId - Envia uma ou mais imagens para a propriedade.
- * Multipart/form-data com campo(s) "file". Cria PropertyMedia e salva em uploads/properties/:propertyId/
- */
-router.post('/upload/:propertyId', (req, res) => {
+router.post('/properties/:propertyId/upload', (req, res) => {
   const propertyId = req.params.propertyId;
+  const oid = ownerId(req as OwnerRequest);
   if (!propertyId) {
     res.status(400).json({ success: false, message: 'propertyId é obrigatório' });
     return;
@@ -327,7 +490,10 @@ router.post('/upload/:propertyId', (req, res) => {
         res.status(400).json({ success: false, message: 'Nenhum arquivo enviado no campo "file"' });
         return;
       }
-      const existing = await prisma.property.findUnique({ where: { id: propertyId }, include: { media: true } });
+      const existing = await prisma.property.findFirst({
+        where: { id: propertyId, proprietarioId: oid },
+        include: { media: true },
+      });
       if (!existing) {
         res.status(404).json({ success: false, message: 'Propriedade não encontrada' });
         return;
@@ -361,17 +527,106 @@ router.post('/upload/:propertyId', (req, res) => {
   });
 });
 
-/**
- * POST /api/propriedades/create/ - Cria propriedade. Gera ref automaticamente se não informado.
- */
-router.post('/create', async (req, res, next) => {
+/** GET /api/proprietarios/portal/properties/:id */
+router.get('/properties/:id', async (req, res) => {
   try {
-    const body = req.body as Record<string, unknown>;
-    const warehouseId = (body.warehouse_id ?? body.warehouseId) as string | undefined;
-    if (!warehouseId) {
-      res.status(400).json({ message: 'warehouse_id é obrigatório' });
+    const oid = ownerId(req);
+    const id = req.params.id;
+    const p = await prisma.property.findFirst({
+      where: { id, proprietarioId: oid },
+      include: {
+        sections: { select: { sectionId: true } },
+        media: { orderBy: { sortOrder: 'asc' } },
+      },
+    });
+    if (!p) {
+      res.status(404).json({ message: 'Imóvel não encontrado' });
       return;
     }
+    const formatted = formatPropriedade(p) as Record<string, unknown>;
+    formatted.section_ids = p.sections?.map((s) => s.sectionId) ?? [];
+    formatted.media = (p.media ?? []).map((m) => ({ id: m.id, url: m.url, sortOrder: m.sortOrder }));
+    formatted.anexos = (p.media ?? []).map((m) => m.url);
+    formatted.imagem_capa_index = 0;
+    res.json(formatted);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao carregar imóvel' });
+  }
+});
+
+/** DELETE /api/proprietarios/portal/properties/:id — apenas imóveis do proprietário logado */
+router.delete('/properties/:id', async (req, res) => {
+  try {
+    const oid = ownerId(req);
+    const id = req.params.id;
+    const existing = await prisma.property.findFirst({
+      where: { id, proprietarioId: oid },
+      select: { id: true },
+    });
+    if (!existing) {
+      res.status(404).json({ message: 'Imóvel não encontrado' });
+      return;
+    }
+    await prisma.property.delete({ where: { id } });
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao excluir imóvel' });
+  }
+});
+
+router.delete('/properties/:id/', (req, res, next) => {
+  req.url = req.url.replace(/\/$/, '');
+  (router as any).handle(req, res, next);
+});
+
+/**
+ * POST /api/proprietarios/portal/properties/remove
+ * Body: { rows: string[] } — exclui vários imóveis do proprietário logado.
+ */
+router.post('/properties/remove', async (req, res) => {
+  try {
+    const oid = ownerId(req);
+    const body = req.body as Record<string, unknown>;
+    const rows = body.rows as string[] | undefined;
+    const ids = Array.isArray(rows) ? rows.filter((x) => typeof x === 'string' && x.length > 0) : [];
+    if (ids.length === 0) {
+      res.status(400).json({ message: 'Nenhum ID informado' });
+      return;
+    }
+    const result = await prisma.property.deleteMany({
+      where: {
+        id: { in: ids },
+        proprietarioId: oid,
+      },
+    });
+    res.json({ success: true, deleted: result.count });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Erro ao excluir imóveis' });
+  }
+});
+
+router.post('/properties/remove/', (req, res, next) => {
+  req.url = '/properties/remove';
+  (router as any).handle(req, res, next);
+});
+
+/** POST /api/proprietarios/portal/properties — cria imóvel pendente de aprovação do master */
+router.post('/properties', async (req, res, next) => {
+  try {
+    const oid = ownerId(req);
+    const body = req.body as Record<string, unknown>;
+    const propRow = await prisma.proprietario.findUnique({
+      where: { id: oid },
+      select: { warehouse_id: true },
+    });
+    if (!propRow?.warehouse_id) {
+      res.status(400).json({ message: 'Loja não vinculada ao proprietário' });
+      return;
+    }
+    const warehouseId = propRow.warehouse_id;
 
     const title = String(body.titulo ?? body.title ?? '').trim();
     if (!title) {
@@ -439,7 +694,8 @@ router.post('/create', async (req, res, next) => {
             description: body.descricao != null ? String(body.descricao) : null,
             type,
             transactionTypes: transactionTypesJson,
-            status: (body.status as string) === 'inativo' ? 'archived' : 'published',
+            status: 'draft',
+            ownerSubmissionStatus: 'pending',
             propertyType: (body.tipo_imovel as string) || null,
             price: mainPrice,
             priceVenda,
@@ -462,8 +718,7 @@ router.post('/create', async (req, res, next) => {
             geoAddressKey: buildGeoAddressKey(addrForGeo),
             builder: body.construtora != null && String(body.construtora).trim() !== '' ? String(body.construtora).trim() : null,
             warehouseId,
-            clientId: (body.clientId as string) || null,
-            proprietarioId: (body.proprietario as string) || null,
+            proprietarioId: oid,
             comodidades: Array.isArray(body.comodidades) ? JSON.stringify(body.comodidades) : (typeof body.comodidades === 'string' ? body.comodidades : null),
             mobiliado: body.mobiliado === true || body.mobiliado === '1',
             aceita_pets: body.aceita_pets === true || body.aceita_pets === '1',
@@ -472,7 +727,6 @@ router.post('/create', async (req, res, next) => {
             parceria: body.parceria === true || body.parceria === '1',
             dataPrevistaEntrega: body.data_prevista_entrega != null && String(body.data_prevista_entrega).trim() !== '' ? new Date(body.data_prevista_entrega as string) : null,
             tagImovel: Array.isArray(body.tag_imovel) ? JSON.stringify(body.tag_imovel) : (typeof body.tag_imovel === 'string' ? body.tag_imovel : null),
-            ownerSubmissionStatus: null,
           },
         });
 
@@ -500,10 +754,9 @@ router.post('/create', async (req, res, next) => {
     }
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
       const target = (e.meta?.target as string[]) ?? [];
-      const msg =
-        target.some((t) => String(t).includes('ref'))
-          ? 'Referência (REF) já em uso nesta imobiliária.'
-          : 'Registro duplicado. Tente novamente.';
+      const msg = target.some((t) => String(t).includes('ref'))
+        ? 'Referência (REF) já em uso nesta imobiliária.'
+        : 'Registro duplicado. Tente novamente.';
       res.status(409).json({ message: msg });
       return;
     }
@@ -511,26 +764,28 @@ router.post('/create', async (req, res, next) => {
   }
 });
 
-router.post('/create/', (req, res, next) => {
-  req.url = '/create';
+router.post('/properties/', (req, res, next) => {
+  req.url = '/properties';
   (router as any).handle(req, res, next);
 });
 
-/**
- * PUT /api/propriedades/update/:id - Atualiza propriedade (ref não é alterado se já existir).
- */
-router.put('/update/:id', async (req, res, next) => {
+/** PUT /api/proprietarios/portal/properties/:id */
+router.put('/properties/:id', async (req, res, next) => {
   try {
+    const oid = ownerId(req);
     const id = req.params.id;
     const body = req.body as Record<string, unknown>;
-    if (!id) {
-      res.status(400).json({ message: 'ID é obrigatório' });
+
+    const existing = await prisma.property.findFirst({ where: { id, proprietarioId: oid } });
+    if (!existing) {
+      res.status(404).json({ message: 'Imóvel não encontrado' });
       return;
     }
 
-    const existing = await prisma.property.findUnique({ where: { id } });
-    if (!existing) {
-      res.status(404).json({ message: 'Propriedade não encontrada' });
+    if (existing.ownerSubmissionStatus === 'approved' && existing.status === 'published') {
+      res.status(403).json({
+        message: 'Imóvel já publicado. Solicite alterações pela imobiliária.',
+      });
       return;
     }
 
@@ -542,6 +797,7 @@ router.put('/update/:id', async (req, res, next) => {
     const transactionTypesJson = Array.isArray(tipoTransacao) && tipoTransacao.length > 0
       ? JSON.stringify(tipoTransacao)
       : existing.transactionTypes;
+
     const priceVenda = body.preco_venda !== undefined
       ? (body.preco_venda != null && body.preco_venda !== '' ? new Prisma.Decimal(Number(body.preco_venda)) : null)
       : existing.priceVenda;
@@ -553,28 +809,6 @@ router.put('/update/:id', async (req, res, next) => {
       : existing.priceCrowdfunding;
     const mainPrice = priceVenda ?? priceAluguel ?? priceCrowdfunding ?? existing.price;
 
-    const nextStatus =
-      body.status !== undefined
-        ? (body.status as string) === 'inativo'
-          ? 'archived'
-          : 'published'
-        : existing.status;
-
-    let nextOwnerSubmissionStatus =
-      body.owner_submission_status !== undefined
-        ? body.owner_submission_status === null || body.owner_submission_status === ''
-          ? null
-          : String(body.owner_submission_status)
-        : existing.ownerSubmissionStatus;
-    if (
-      body.owner_submission_status === undefined &&
-      nextStatus === 'published' &&
-      existing.ownerSubmissionStatus === 'pending'
-    ) {
-      nextOwnerSubmissionStatus = 'approved';
-    }
-
-    const norm = (s: unknown) => String(s ?? '').trim();
     const mergedAddr = {
       street: body.endereco !== undefined ? String(body.endereco) : existing.address,
       number: body.numero !== undefined ? (body.numero != null && String(body.numero).trim() !== '' ? String(body.numero).trim() : null) : existing.numero,
@@ -583,13 +817,6 @@ router.put('/update/:id', async (req, res, next) => {
       state: body.estado !== undefined ? String(body.estado) : existing.state,
       zip: body.cep !== undefined ? String(body.cep) : existing.zip,
     };
-    const addrChanged =
-      (body.endereco !== undefined && norm(body.endereco) !== norm(existing.address)) ||
-      (body.numero !== undefined && norm(body.numero) !== norm(existing.numero)) ||
-      (body.bairro !== undefined && norm(body.bairro) !== norm(existing.neighborhood)) ||
-      (body.cidade !== undefined && norm(body.cidade) !== norm(existing.city)) ||
-      (body.estado !== undefined && norm(body.estado) !== norm(existing.state)) ||
-      (body.cep !== undefined && norm(body.cep) !== norm(existing.zip));
 
     let nextLat: Prisma.Decimal | null = existing.latitude;
     let nextLng: Prisma.Decimal | null = existing.longitude;
@@ -598,7 +825,7 @@ router.put('/update/:id', async (req, res, next) => {
     if (body.latitude !== undefined && body.longitude !== undefined && Number.isFinite(bLat) && Number.isFinite(bLng)) {
       nextLat = new Prisma.Decimal(bLat);
       nextLng = new Prisma.Decimal(bLng);
-    } else if (existing.latitude == null || existing.longitude == null || addrChanged) {
+    } else {
       const geo = await geocodeBrazilAddress({
         street: mergedAddr.street,
         number: mergedAddr.number,
@@ -620,7 +847,6 @@ router.put('/update/:id', async (req, res, next) => {
         description: body.descricao !== undefined ? String(body.descricao) : existing.description,
         type,
         transactionTypes: transactionTypesJson,
-        status: nextStatus,
         propertyType: body.tipo_imovel !== undefined ? (body.tipo_imovel as string) || null : existing.propertyType,
         price: mainPrice,
         priceVenda,
@@ -654,7 +880,6 @@ router.put('/update/:id', async (req, res, next) => {
           zip: mergedAddr.zip,
         }),
         builder: body.construtora !== undefined ? (body.construtora != null && String(body.construtora).trim() !== '' ? String(body.construtora).trim() : null) : existing.builder,
-        proprietarioId: body.proprietario !== undefined ? ((body.proprietario as string) || null) : existing.proprietarioId,
         comodidades: body.comodidades !== undefined ? (Array.isArray(body.comodidades) ? JSON.stringify(body.comodidades) : (typeof body.comodidades === 'string' ? body.comodidades : null)) : existing.comodidades,
         mobiliado: body.mobiliado !== undefined ? (body.mobiliado === true || body.mobiliado === '1') : existing.mobiliado,
         aceita_pets: body.aceita_pets !== undefined ? (body.aceita_pets === true || body.aceita_pets === '1') : existing.aceita_pets,
@@ -663,16 +888,16 @@ router.put('/update/:id', async (req, res, next) => {
         parceria: body.parceria !== undefined ? (body.parceria === true || body.parceria === '1') : existing.parceria,
         dataPrevistaEntrega: body.data_prevista_entrega !== undefined ? (body.data_prevista_entrega != null && String(body.data_prevista_entrega).trim() !== '' ? new Date(body.data_prevista_entrega as string) : null) : existing.dataPrevistaEntrega,
         tagImovel: body.tag_imovel !== undefined ? (Array.isArray(body.tag_imovel) ? JSON.stringify(body.tag_imovel) : (typeof body.tag_imovel === 'string' ? body.tag_imovel : null)) : existing.tagImovel,
-        ownerSubmissionStatus: nextOwnerSubmissionStatus,
+        ownerSubmissionStatus: 'pending',
       },
     });
 
-    const sectionIds = (body.section_ids ?? body.exibir_nas_secoes) as string[] | undefined;
-    if (Array.isArray(sectionIds)) {
+    const sectionIdsPut = (body.section_ids ?? body.exibir_nas_secoes) as string[] | undefined;
+    if (Array.isArray(sectionIdsPut)) {
       await prisma.propertySection.deleteMany({ where: { propertyId: id } });
-      if (sectionIds.length > 0) {
+      if (sectionIdsPut.length > 0) {
         await prisma.propertySection.createMany({
-          data: sectionIds.map((sectionId, i) => ({
+          data: sectionIdsPut.map((sectionId, i) => ({
             propertyId: id,
             sectionId: String(sectionId),
             sortOrder: i,
@@ -711,40 +936,11 @@ router.put('/update/:id', async (req, res, next) => {
   }
 });
 
-router.put('/update/:id/', (req, res, next) => {
+router.put('/properties/:id/', (req, res, next) => {
   req.url = req.url.replace(/\/$/, '');
   (router as any).handle(req, res, next);
 });
 
-/**
- * POST /api/propriedades/remove/ - Remove propriedades (body: rows = array de ids, warehouse_id).
- */
-router.post('/remove', async (req, res, next) => {
-  try {
-    const body = req.body as Record<string, unknown>;
-    const rows = body.rows as string[] | undefined;
-    const ids = Array.isArray(rows) ? rows : [];
-    const warehouseId = body.warehouse_id ?? body.warehouseId;
-    if (ids.length === 0) {
-      res.status(400).json({ message: 'Nenhum ID informado' });
-      return;
-    }
-
-    await prisma.property.deleteMany({
-      where: {
-        id: { in: ids },
-        ...(warehouseId ? { warehouseId: String(warehouseId) } : {}),
-      },
-    });
-    res.json({ success: true, deleted: ids.length });
-  } catch (e) {
-    next(e);
-  }
-});
-
-router.post('/remove/', (req, res, next) => {
-  req.url = '/remove';
-  (router as any).handle(req, res, next);
-});
+attachHelpdeskOwnerRoutes(router);
 
 export default router;

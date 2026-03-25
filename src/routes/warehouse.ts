@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma.js';
 
 const router = Router();
 
-function formatWarehouse(w: {
+type WarehouseRow = {
   id: string;
   warehouseCode: string;
   warehouseName: string;
@@ -21,9 +21,14 @@ function formatWarehouse(w: {
   cnpj?: string | null;
   ie?: string | null;
   im?: string | null;
+  cnae?: string | null;
+  ibgeUfId?: string | null;
+  ibgeMunicipioId?: string | null;
   note?: string | null;
   display: boolean;
-}) {
+};
+
+function formatWarehouse(w: WarehouseRow) {
   return {
     warehouse_id: w.id,
     warehouse_code: w.warehouseCode,
@@ -43,6 +48,9 @@ function formatWarehouse(w: {
     cnpj: w.cnpj ?? null,
     ie: w.ie ?? null,
     im: w.im ?? null,
+    cnae: w.cnae ?? null,
+    codigoUF: w.ibgeUfId != null ? String(w.ibgeUfId) : '',
+    ccidade: w.ibgeMunicipioId != null ? String(w.ibgeMunicipioId) : '',
     note: w.note ?? null,
     display: w.display ? '1' : '0',
   };
@@ -112,6 +120,9 @@ async function updateWarehouse(req: import('express').Request, res: import('expr
     cnpj?: string;
     ie?: string;
     im?: string;
+    cnae?: string | null;
+    ibgeUfId?: string | null;
+    ibgeMunicipioId?: string | null;
     note?: string;
   } = {};
   if (display !== undefined) updateData.display = display;
@@ -132,6 +143,17 @@ async function updateWarehouse(req: import('express').Request, res: import('expr
   if (typeof body.ie === 'string') updateData.ie = body.ie;
   if (typeof body.im === 'string') updateData.im = body.im;
   if (typeof body.note === 'string') updateData.note = body.note;
+  if (body.cnae !== undefined) {
+    updateData.cnae = typeof body.cnae === 'string' ? body.cnae.trim() || null : null;
+  }
+  if (body.codigoUF !== undefined || body.codigo_uf !== undefined) {
+    const raw = (body.codigoUF ?? body.codigo_uf) as unknown;
+    updateData.ibgeUfId = typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+  }
+  if (body.ccidade !== undefined) {
+    updateData.ibgeMunicipioId =
+      typeof body.ccidade === 'string' && body.ccidade.trim() ? body.ccidade.trim() : null;
+  }
 
   const w = await prisma.warehouse.update({
     where: { id },
@@ -173,6 +195,15 @@ async function createWarehouse(req: import('express').Request, res: import('expr
         cnpj: typeof body.cnpj === 'string' ? body.cnpj : null,
         ie: typeof body.ie === 'string' ? body.ie : null,
         im: typeof body.im === 'string' ? body.im : null,
+        cnae: typeof body.cnae === 'string' ? body.cnae.trim() || null : null,
+        ibgeUfId:
+          typeof body.codigoUF === 'string' && body.codigoUF.trim()
+            ? body.codigoUF.trim()
+            : typeof body.codigo_uf === 'string' && body.codigo_uf.trim()
+              ? body.codigo_uf.trim()
+              : null,
+        ibgeMunicipioId:
+          typeof body.ccidade === 'string' && body.ccidade.trim() ? body.ccidade.trim() : null,
         note: typeof body.note === 'string' ? body.note : null,
         display: body.display !== undefined ? body.display === '1' || body.display === true : true,
       },
