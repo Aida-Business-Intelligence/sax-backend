@@ -37,7 +37,8 @@ const helpdeskOwnerImageUpload = multer({
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.mimetype);
-    cb(ok ? null : new Error('Apenas imagens (JPEG, PNG, GIF ou WebP)'), ok);
+    if (!ok) return cb(new Error('Apenas imagens (JPEG, PNG, GIF ou WebP)'));
+    cb(null, true);
   },
 });
 

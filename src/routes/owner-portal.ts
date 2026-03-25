@@ -137,7 +137,7 @@ router.get('/me', async (req, res) => {
 
 router.get('/me/', (req, res, next) => {
   req.url = '/me';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /** PATCH /api/proprietarios/portal/me */
@@ -176,7 +176,7 @@ router.patch('/me', async (req, res) => {
 
 router.patch('/me/', (req, res, next) => {
   req.url = '/me';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /** POST /api/proprietarios/portal/me/avatar — multipart campo "file" (máx. 3 MB) */
@@ -283,7 +283,7 @@ router.patch('/me/password', async (req, res) => {
 
 router.patch('/me/password/', (req, res, next) => {
   req.url = '/me/password';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /** GET /api/proprietarios/portal/dashboard */
@@ -323,7 +323,7 @@ router.get('/dashboard', async (req, res) => {
 
 router.get('/dashboard/', (req, res, next) => {
   req.url = '/dashboard';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /** GET /api/proprietarios/portal/reports?from=ISO&to=ISO */
@@ -402,7 +402,7 @@ router.get('/reports', async (req, res) => {
 
 router.get('/reports/', (req, res, next) => {
   req.url = '/reports';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /** GET /api/proprietarios/portal/properties — query: search, ref, transactionType, propertyType, state */
@@ -433,7 +433,7 @@ router.get('/properties', async (req, res) => {
 
 router.get('/properties/', (req, res, next) => {
   req.url = '/properties';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /**
@@ -578,7 +578,7 @@ router.delete('/properties/:id', async (req, res) => {
 
 router.delete('/properties/:id/', (req, res, next) => {
   req.url = req.url.replace(/\/$/, '');
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /**
@@ -610,7 +610,7 @@ router.post('/properties/remove', async (req, res) => {
 
 router.post('/properties/remove/', (req, res, next) => {
   req.url = '/properties/remove';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /** POST /api/proprietarios/portal/properties — cria imóvel pendente de aprovação do master */
@@ -766,7 +766,7 @@ router.post('/properties', async (req, res, next) => {
 
 router.post('/properties/', (req, res, next) => {
   req.url = '/properties';
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 /** PUT /api/proprietarios/portal/properties/:id */
@@ -938,7 +938,7 @@ router.put('/properties/:id', async (req, res, next) => {
 
 router.put('/properties/:id/', (req, res, next) => {
   req.url = req.url.replace(/\/$/, '');
-  router.handle(req, res, next);
+  (router as any).handle(req, res, next);
 });
 
 attachHelpdeskOwnerRoutes(router);
