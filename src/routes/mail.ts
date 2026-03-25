@@ -225,13 +225,42 @@ router.get('/labels', async (req: Request, res: Response) => {
       tls: { rejectUnauthorized: false },
     });
     await client.connect();
-    const list = await client.list();
+    const list = await client.list({ statusQuery: { unseen: true, messages: true } }).catch(() => client.list());
     await client.logout();
-    const labelsMap = new Map(list.map((mb) => [mb.path, { id: mb.path, name: mb.path, path: mb.path, type: mb.specialUse ? 'system' : 'custom' }]));
-    if (!labelsMap.has('INBOX')) {
-      labelsMap.set('INBOX', { id: 'INBOX', name: 'INBOX', path: 'INBOX', type: 'system' });
+    const labelsMap = new Map<string, { id: string; name: string; path: string; type: string; unreadCount?: number }>();
+    for (const mb of list) {
+      if (mb.flags?.has('\\Noselect')) continue;
+      const unreadCount = (mb as { status?: { unseen?: number } }).status?.unseen ?? 0;
+      labelsMap.set(mb.path, {
+        id: mb.path,
+        name: mb.path,
+        path: mb.path,
+        type: mb.specialUse ? 'system' : 'custom',
+        unreadCount: unreadCount > 0 ? unreadCount : undefined,
+      });
     }
-    const labels = Array.from(labelsMap.values());
+    if (!labelsMap.has('INBOX')) {
+      labelsMap.set('INBOX', { id: 'INBOX', name: 'INBOX', path: 'INBOX', type: 'system', unreadCount: undefined });
+    }
+    const order = [
+      'INBOX',
+      '[Gmail]/Com Estrela',
+      '[Gmail]/Starred',
+      '[Gmail]/E-Mails Enviados',
+      '[Gmail]/Sent Mail',
+      '[Gmail]/Rascunhos',
+      '[Gmail]/Drafts',
+      '[Gmail]/Importante',
+      '[Gmail]/Important',
+      '[Gmail]/Todos Os E-Mails',
+      '[Gmail]/All Mail',
+      '[Gmail]/Spam',
+      '[Gmail]/Lixeira',
+      '[Gmail]/Trash',
+    ];
+    const rest = Array.from(labelsMap.keys()).filter((p) => !order.includes(p));
+    const ordered = [...order.filter((p) => labelsMap.has(p)), ...rest.sort()];
+    const labels = ordered.map((p) => labelsMap.get(p)!).filter(Boolean);
     res.json({ labels });
   } catch (e: unknown) {
     const err = e as Error & { responseText?: string };
@@ -301,12 +330,19 @@ router.get('/list', async (req: Request, res: Response) => {
       labelIds: string[];
     }> = [];
     const limit = Math.min(Number(req.query.limit) || 100, 500);
-    const sinceDate = new Date();
-    sinceDate.setDate(sinceDate.getDate() - 90);
-    const maxFetch = 3000;
+    const useFullFetch =
+      /starred|com estrela|flagged|important|importante|drafts|rascunhos|trash|lixeira|spam/i.test(labelId);
+    const maxFetch = useFullFetch ? Math.min(mailbox.exists, 500) : 3000;
+    const fetchRange = useFullFetch
+      ? '1:*'
+      : { since: (() => {
+          const d = new Date();
+          d.setDate(d.getDate() - 90);
+          return d;
+        })() };
     let count = 0;
     for await (const msg of client.fetch(
-      { since: sinceDate },
+      fetchRange,
       { envelope: true, uid: true, flags: true }
     )) {
       const env = msg.envelope;
@@ -400,10 +436,12 @@ router.get('/details', async (req: Request, res: Response) => {
       text: string;
       html: string;
     } | null = null;
+    let wasUnread = false;
     for await (const msg of client.fetch(
       { uid },
       { envelope: true, uid: true, flags: true, source: true }
     )) {
+      wasUnread = !msg.flags?.has('\\Seen');
       const env = msg.envelope;
       let text = '';
       let html = '';
@@ -421,12 +459,20 @@ router.get('/details', async (req: Request, res: Response) => {
         to: (env.to || []).map((a) => ({ email: a.address || '', name: a.name || '' })),
         subject: env.subject || '(sem assunto)',
         createdAt: env.date ? new Date(env.date).toISOString() : new Date().toISOString(),
-        isUnread: !msg.flags?.has('\\Seen'),
+        isUnread: false,
         labelIds: [labelId],
         text,
         html,
       };
       break;
+    }
+    // STORE só depois do FETCH terminar — durante o fetch outro comando pode quebrar Gmail/outros.
+    if (mail && wasUnread && uid > 0) {
+      try {
+        await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
+      } catch (e) {
+        console.warn('mail details mark read', e);
+      }
     }
     await client.logout();
     res.json({ mail });

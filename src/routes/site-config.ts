@@ -84,6 +84,36 @@ function parseFooterContent(raw: string | null | undefined): Record<string, unkn
   }
 }
 
+function parseExclusiveProjectsContent(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? (o as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseImoveisContent(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? (o as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseProprietariosContent(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? (o as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export type TransactionTypeOption = { value: string; label: string };
 
 const DEFAULT_TRANSACTION_TYPES: TransactionTypeOption[] = [
@@ -117,6 +147,9 @@ function emptyResponse() {
     aboutContent: null as Record<string, unknown> | null,
     footerContent: null as Record<string, unknown> | null,
     transactionTypes: DEFAULT_TRANSACTION_TYPES,
+    exclusiveProjectsContent: null as Record<string, unknown> | null,
+    imoveisContent: null as Record<string, unknown> | null,
+    proprietariosContent: null as Record<string, unknown> | null,
   };
 }
 
@@ -162,6 +195,36 @@ router.get('/', async (_req, res, next) => {
       `;
       transactionTypesRaw = rawRows?.[0]?.transactionTypes ?? null;
     }
+    let exclusiveProjectsRaw: string | null | undefined = (row as { exclusiveProjectsContent?: string | null })
+      ?.exclusiveProjectsContent;
+    if (exclusiveProjectsRaw === undefined && row?.id) {
+      const rawRows = await prisma.$queryRaw<[{ exclusiveProjectsContent: string | null }]>`
+        SELECT "exclusiveProjectsContent" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+      `;
+      exclusiveProjectsRaw = rawRows?.[0]?.exclusiveProjectsContent ?? null;
+    }
+    if (exclusiveProjectsRaw === undefined) exclusiveProjectsRaw = null;
+
+    let imoveisContentRaw: string | null | undefined = (row as { imoveisContent?: string | null })
+      ?.imoveisContent;
+    if (imoveisContentRaw === undefined && row?.id) {
+      const rawRows = await prisma.$queryRaw<[{ imoveisContent: string | null }]>`
+        SELECT "imoveisContent" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+      `;
+      imoveisContentRaw = rawRows?.[0]?.imoveisContent ?? null;
+    }
+    if (imoveisContentRaw === undefined) imoveisContentRaw = null;
+
+    let proprietariosContentRaw: string | null | undefined = (row as { proprietariosContent?: string | null })
+      ?.proprietariosContent;
+    if (proprietariosContentRaw === undefined && row?.id) {
+      const rawRows = await prisma.$queryRaw<[{ proprietariosContent: string | null }]>`
+        SELECT "proprietariosContent" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+      `;
+      proprietariosContentRaw = rawRows?.[0]?.proprietariosContent ?? null;
+    }
+    if (proprietariosContentRaw === undefined) proprietariosContentRaw = null;
+
     res.json({
       featuredPropertyIds,
       logoUrl: row?.logoUrl ?? null,
@@ -172,6 +235,9 @@ router.get('/', async (_req, res, next) => {
       aboutContent: parseAboutContent(aboutContentRaw),
       footerContent: parseFooterContent(footerContentRaw),
       transactionTypes: parseTransactionTypes(transactionTypesRaw ?? null),
+      exclusiveProjectsContent: parseExclusiveProjectsContent(exclusiveProjectsRaw),
+      imoveisContent: parseImoveisContent(imoveisContentRaw),
+      proprietariosContent: parseProprietariosContent(proprietariosContentRaw),
     });
   } catch (e) {
     console.error('[site-config GET]', e);
@@ -202,6 +268,9 @@ router.put('/', async (req, res, next) => {
       aboutContent?: Record<string, unknown> | null;
       footerContent?: Record<string, unknown> | null;
       transactionTypes?: TransactionTypeOption[] | null;
+      exclusiveProjectsContent?: Record<string, unknown> | null;
+      imoveisContent?: Record<string, unknown> | null;
+      proprietariosContent?: Record<string, unknown> | null;
     };
     const featuredPropertyIdsJson =
       body.featuredPropertyIds !== undefined
@@ -257,9 +326,35 @@ router.put('/', async (req, res, next) => {
             ? JSON.stringify(body.transactionTypes.filter((t) => t && typeof t.value === 'string'))
             : null)
         : undefined;
+    const exclusiveProjectsContentJson =
+      body.exclusiveProjectsContent !== undefined
+        ? (body.exclusiveProjectsContent != null && typeof body.exclusiveProjectsContent === 'object'
+            ? JSON.stringify(body.exclusiveProjectsContent)
+            : null)
+        : undefined;
+    const imoveisContentJson =
+      body.imoveisContent !== undefined
+        ? (body.imoveisContent != null && typeof body.imoveisContent === 'object'
+            ? JSON.stringify(body.imoveisContent)
+            : null)
+        : undefined;
+    const proprietariosContentJson =
+      body.proprietariosContent !== undefined
+        ? (body.proprietariosContent != null && typeof body.proprietariosContent === 'object'
+            ? JSON.stringify(body.proprietariosContent)
+            : null)
+        : undefined;
 
     const rowData = await prisma.siteConfig.findFirst({ orderBy: { updatedAt: 'desc' } });
-    type SiteConfigRow = typeof rowData & { partnerLogos?: string | null; aboutContent?: string | null; footerContent?: string | null; transactionTypes?: string | null };
+    type SiteConfigRow = typeof rowData & {
+      partnerLogos?: string | null;
+      aboutContent?: string | null;
+      footerContent?: string | null;
+      transactionTypes?: string | null;
+      exclusiveProjectsContent?: string | null;
+      imoveisContent?: string | null;
+      proprietariosContent?: string | null;
+    };
     const prismaRaw = prisma as { $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown> };
     let row = rowData as SiteConfigRow | null;
     if (!row) {
@@ -282,6 +377,15 @@ router.put('/', async (req, res, next) => {
       }
       if (transactionTypesJson !== undefined) {
         await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "transactionTypes" = ${transactionTypesJson} WHERE id = ${row.id}`;
+      }
+      if (exclusiveProjectsContentJson !== undefined) {
+        await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "exclusiveProjectsContent" = ${exclusiveProjectsContentJson} WHERE id = ${row.id}`;
+      }
+      if (imoveisContentJson !== undefined) {
+        await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "imoveisContent" = ${imoveisContentJson} WHERE id = ${row.id}`;
+      }
+      if (proprietariosContentJson !== undefined) {
+        await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "proprietariosContent" = ${proprietariosContentJson} WHERE id = ${row.id}`;
       }
     } else {
       const data: Record<string, unknown> = {};
@@ -306,6 +410,15 @@ router.put('/', async (req, res, next) => {
       if (transactionTypesJson !== undefined) {
         await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "transactionTypes" = ${transactionTypesJson} WHERE id = ${row.id}`;
       }
+      if (exclusiveProjectsContentJson !== undefined) {
+        await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "exclusiveProjectsContent" = ${exclusiveProjectsContentJson} WHERE id = ${row.id}`;
+      }
+      if (imoveisContentJson !== undefined) {
+        await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "imoveisContent" = ${imoveisContentJson} WHERE id = ${row.id}`;
+      }
+      if (proprietariosContentJson !== undefined) {
+        await prismaRaw.$executeRaw`UPDATE "SiteConfig" SET "proprietariosContent" = ${proprietariosContentJson} WHERE id = ${row.id}`;
+      }
     }
     let outFooterContentRaw: string | null = (row as { footerContent?: string | null })?.footerContent ?? null;
     if (outFooterContentRaw === undefined && row?.id) {
@@ -326,6 +439,39 @@ router.put('/', async (req, res, next) => {
       `;
       outTransactionTypesRaw = rawRows?.[0]?.transactionTypes ?? null;
     }
+    let outExclusiveRaw: string | null | undefined = (row as SiteConfigRow).exclusiveProjectsContent;
+    if (exclusiveProjectsContentJson !== undefined) {
+      outExclusiveRaw = exclusiveProjectsContentJson;
+    } else if (outExclusiveRaw === undefined && row?.id) {
+      const rawRows = await prisma.$queryRaw<[{ exclusiveProjectsContent: string | null }]>`
+        SELECT "exclusiveProjectsContent" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+      `;
+      outExclusiveRaw = rawRows?.[0]?.exclusiveProjectsContent ?? null;
+    }
+    if (outExclusiveRaw === undefined) outExclusiveRaw = null;
+
+    let outImoveisRaw: string | null | undefined = (row as SiteConfigRow).imoveisContent;
+    if (imoveisContentJson !== undefined) {
+      outImoveisRaw = imoveisContentJson;
+    } else if (outImoveisRaw === undefined && row?.id) {
+      const rawRows = await prisma.$queryRaw<[{ imoveisContent: string | null }]>`
+        SELECT "imoveisContent" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+      `;
+      outImoveisRaw = rawRows?.[0]?.imoveisContent ?? null;
+    }
+    if (outImoveisRaw === undefined) outImoveisRaw = null;
+
+    let outProprietariosRaw: string | null | undefined = (row as SiteConfigRow).proprietariosContent;
+    if (proprietariosContentJson !== undefined) {
+      outProprietariosRaw = proprietariosContentJson;
+    } else if (outProprietariosRaw === undefined && row?.id) {
+      const rawRows = await prisma.$queryRaw<[{ proprietariosContent: string | null }]>`
+        SELECT "proprietariosContent" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+      `;
+      outProprietariosRaw = rawRows?.[0]?.proprietariosContent ?? null;
+    }
+    if (outProprietariosRaw === undefined) outProprietariosRaw = null;
+
     res.json({
       featuredPropertyIds: outFeatured,
       logoUrl: row.logoUrl ?? null,
@@ -336,6 +482,9 @@ router.put('/', async (req, res, next) => {
       aboutContent: outAboutContent,
       footerContent: parseFooterContent(footerContentJson !== undefined ? footerContentJson : outFooterContentRaw),
       transactionTypes: parseTransactionTypes(outTransactionTypesRaw ?? null),
+      exclusiveProjectsContent: parseExclusiveProjectsContent(outExclusiveRaw),
+      imoveisContent: parseImoveisContent(outImoveisRaw),
+      proprietariosContent: parseProprietariosContent(outProprietariosRaw),
     });
   } catch (e) {
     console.error('[site-config PUT]', e);

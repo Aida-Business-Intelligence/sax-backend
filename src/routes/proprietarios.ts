@@ -6,6 +6,13 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { prisma } from '../lib/prisma.js';
+import {
+  dispatchProprietarioCredentialNotifications,
+  generateProvisionalPassword,
+  generateUniqueProvisionalPassword,
+  parseNotifyCredentials,
+} from '../lib/proprietario-credentials.js';
+import { publicUploadUrl } from '../lib/public-asset-url.js';
 
 const router = Router();
 
@@ -26,9 +33,14 @@ async function ensureProprietarioSchema() {
           ADD COLUMN IF NOT EXISTS "subdomain" TEXT,
           ADD COLUMN IF NOT EXISTS "access_email" TEXT,
           ADD COLUMN IF NOT EXISTS "password_hash" TEXT,
+          ADD COLUMN IF NOT EXISTS "last_provisional_password" TEXT,
+          ADD COLUMN IF NOT EXISTS "credential_notify_email" TEXT,
+          ADD COLUMN IF NOT EXISTS "credential_notify_whatsapp" TEXT,
+          ADD COLUMN IF NOT EXISTS "credential_portal_base_url" TEXT,
           ADD COLUMN IF NOT EXISTS "must_change_password" BOOLEAN NOT NULL DEFAULT false,
           ADD COLUMN IF NOT EXISTS "approvedAt" TIMESTAMP(3),
-          ADD COLUMN IF NOT EXISTS "rejectedAt" TIMESTAMP(3)
+          ADD COLUMN IF NOT EXISTS "rejectedAt" TIMESTAMP(3),
+          ADD COLUMN IF NOT EXISTS "foto_url" TEXT
       `);
 
       await prisma.$executeRaw(Prisma.sql`
@@ -129,6 +141,23 @@ function normalizeAccessBody(body: Record<string, unknown>) {
   };
 }
 
+/** Destinos salvos no cadastro (PDV) para reabrir no editar; mesmo objeto de notify_credentials. */
+function normalizeNotifyCredentialStorage(body: Record<string, unknown>) {
+  const raw = body.notify_credentials ?? body.notifyCredentials;
+  if (!raw || typeof raw !== 'object') {
+    return { email_to: null as string | null, whatsapp_phone: null as string | null, portal_base_url: null as string | null };
+  }
+  const o = raw as Record<string, unknown>;
+  const email = typeof o.email_to === 'string' ? o.email_to.trim() : '';
+  const wa = typeof o.whatsapp_phone === 'string' ? o.whatsapp_phone.trim() : '';
+  const url = typeof o.portal_base_url === 'string' ? o.portal_base_url.trim().replace(/\/$/, '') : '';
+  return {
+    email_to: email || null,
+    whatsapp_phone: wa || null,
+    portal_base_url: url || null,
+  };
+}
+
 function formatProprietario(row: Record<string, unknown>) {
   return {
     id: String(row.id ?? ''),
@@ -159,32 +188,50 @@ function formatProprietario(row: Record<string, unknown>) {
     observacoes: row.observacoes != null ? String(row.observacoes) : '',
     note: row.observacoes != null ? String(row.observacoes) : '',
     warehouse_id: row.warehouse_id != null ? String(row.warehouse_id) : '',
+    warehouse_name:
+      row.warehouse_name != null
+        ? String(row.warehouse_name)
+        : row.warehouseName != null
+          ? String(row.warehouseName)
+          : '',
     status: row.status != null ? String(row.status) : 'pending',
     origem: row.origem != null ? String(row.origem) : 'erp',
     subdomain: row.subdomain != null ? String(row.subdomain) : '',
     access_email: row.access_email != null ? String(row.access_email) : '',
+    last_provisional_password:
+      row.last_provisional_password != null ? String(row.last_provisional_password) : '',
+    credential_notify_email:
+      row.credential_notify_email != null ? String(row.credential_notify_email) : '',
+    credential_notify_whatsapp:
+      row.credential_notify_whatsapp != null ? String(row.credential_notify_whatsapp) : '',
+    credential_portal_base_url:
+      row.credential_portal_base_url != null ? String(row.credential_portal_base_url) : '',
     must_change_password: Boolean(row.must_change_password),
     mustChangePassword: Boolean(row.must_change_password),
     has_access: Boolean(row.password_hash),
     approvedAt: row.approvedAt ?? null,
     rejectedAt: row.rejectedAt ?? null,
+    foto_url: publicUploadUrl(
+      row.foto_url != null ? String(row.foto_url) : row.fotoUrl != null ? String(row.fotoUrl) : '',
+    ),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
-function buildWhere(search?: string, warehouseId?: string) {
+function buildWhere(search?: string, warehouseId?: string, tableAlias?: 'p') {
+  const p = tableAlias ? 'p.' : '';
   const filters: Prisma.Sql[] = [];
-  if (warehouseId) filters.push(Prisma.sql`warehouse_id = ${warehouseId}`);
+  if (warehouseId) filters.push(Prisma.sql`${Prisma.raw(`${p}warehouse_id`)} = ${warehouseId}`);
   if (search) {
     const like = `%${search}%`;
     filters.push(
       Prisma.sql`(
-        nome ILIKE ${like}
-        OR email ILIKE ${like}
-        OR telefone ILIKE ${like}
-        OR cpf_cnpj ILIKE ${like}
-        OR cidade ILIKE ${like}
+        ${Prisma.raw(`${p}nome`)} ILIKE ${like}
+        OR ${Prisma.raw(`${p}email`)} ILIKE ${like}
+        OR ${Prisma.raw(`${p}telefone`)} ILIKE ${like}
+        OR ${Prisma.raw(`${p}cpf_cnpj`)} ILIKE ${like}
+        OR ${Prisma.raw(`${p}cidade`)} ILIKE ${like}
       )`,
     );
   }
@@ -209,33 +256,41 @@ function listSelect(includeOptionalColumns: boolean) {
   if (includeOptionalColumns) {
     return Prisma.sql`
       SELECT
-        id,
-        nome,
-        email,
-        telefone,
-        cpf_cnpj,
-        cidade,
-        warehouse_id,
-        status,
-        origem,
-        "createdAt"
-      FROM "Proprietario"
+        p.id,
+        p.nome,
+        p.email,
+        p.telefone,
+        p.cpf_cnpj,
+        p.cidade,
+        p.observacoes,
+        p.warehouse_id,
+        w."warehouseName" AS warehouse_name,
+        p.status,
+        p.origem,
+        p.foto_url,
+        p."createdAt"
+      FROM "Proprietario" p
+      LEFT JOIN "Warehouse" w ON w.id = p.warehouse_id
     `;
   }
 
   return Prisma.sql`
     SELECT
-      id,
-      nome,
-      email,
-      telefone,
-      cpf_cnpj,
-      cidade,
-      warehouse_id,
+      p.id,
+      p.nome,
+      p.email,
+      p.telefone,
+      p.cpf_cnpj,
+      p.cidade,
+      p.observacoes,
+      p.warehouse_id,
+      w."warehouseName" AS warehouse_name,
       NULL::text AS status,
       NULL::text AS origem,
-      "createdAt"
-    FROM "Proprietario"
+      NULL::text AS foto_url,
+      p."createdAt"
+    FROM "Proprietario" p
+    LEFT JOIN "Warehouse" w ON w.id = p.warehouse_id
   `;
 }
 
@@ -244,13 +299,13 @@ async function queryList(queryWhere: Prisma.Sql | null, pageSize: number, offset
     const fromClause = listSelect(includeOptionalColumns);
     const total = await prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
       SELECT COUNT(*)::bigint AS total
-      FROM "Proprietario"
+      FROM "Proprietario" p
       ${queryWhere ?? Prisma.empty}
     `);
     const data = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       ${fromClause}
       ${queryWhere ?? Prisma.empty}
-      ORDER BY "createdAt" DESC
+      ORDER BY p."createdAt" DESC
       LIMIT ${pageSize}
       OFFSET ${offset}
     `);
@@ -272,7 +327,7 @@ async function list(req: import('express').Request, res: import('express').Respo
     const pageSize = Math.max(Number(req.query.pageSize ?? 25) || 25, 1);
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     const warehouseId = typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id.trim() : '';
-    const where = buildWhere(search, warehouseId || undefined);
+    const where = buildWhere(search, warehouseId || undefined, 'p');
     const offset = (page - 1) * pageSize;
     const { total, data } = await queryList(where, pageSize, offset);
     res.json({ data: data.map(formatProprietario), total: Number(total[0]?.total ?? 0) });
@@ -292,33 +347,40 @@ async function getById(req: import('express').Request, res: import('express').Re
     }
     const rows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT
-        id,
-        nome,
-        email,
-        telefone,
-        tipo_documento,
-        cpf_cnpj,
-        cep,
-        endereco,
-        numero,
-        complemento,
-        bairro,
-        cidade,
-        estado,
-        observacoes,
-        warehouse_id,
-        status,
-        origem,
-        subdomain,
-        access_email,
-        must_change_password,
-        password_hash,
-        "approvedAt",
-        "rejectedAt",
-        "createdAt",
-        "updatedAt"
-      FROM "Proprietario"
-      WHERE id = ${id}
+        p.id,
+        p.nome,
+        p.email,
+        p.telefone,
+        p.tipo_documento,
+        p.cpf_cnpj,
+        p.cep,
+        p.endereco,
+        p.numero,
+        p.complemento,
+        p.bairro,
+        p.cidade,
+        p.estado,
+        p.observacoes,
+        p.warehouse_id,
+        w."warehouseName" AS warehouse_name,
+        p.status,
+        p.origem,
+        p.subdomain,
+        p.access_email,
+        p.last_provisional_password,
+        p.credential_notify_email,
+        p.credential_notify_whatsapp,
+        p.credential_portal_base_url,
+        p.must_change_password,
+        p.password_hash,
+        p."approvedAt",
+        p."rejectedAt",
+        p.foto_url,
+        p."createdAt",
+        p."updatedAt"
+      FROM "Proprietario" p
+      LEFT JOIN "Warehouse" w ON w.id = p.warehouse_id
+      WHERE p.id = ${id}
       LIMIT 1
     `);
     if (!rows.length) {
@@ -335,6 +397,11 @@ async function getById(req: import('express').Request, res: import('express').Re
 async function insertOwner(
   data: ReturnType<typeof normalizeAccessBody>,
   options: { forceStatus?: string | null; forceOrigem?: string | null } = {},
+  nc: ReturnType<typeof normalizeNotifyCredentialStorage> = {
+    email_to: null,
+    whatsapp_phone: null,
+    portal_base_url: null,
+  },
 ) {
   const id = randomUUID().replace(/-/g, '');
   const shouldCreateAccess = Boolean(data.password || data.access_email || data.subdomain || data.createAccess);
@@ -343,7 +410,11 @@ async function insertOwner(
   const subdomain = data.subdomain || (shouldCreateAccess ? slugify(data.nome) : null);
   const accessEmail = data.access_email || (shouldCreateAccess ? data.email : null);
   const passwordHash = data.password ? await bcrypt.hash(data.password, 10) : null;
+  const lastProvisional = passwordHash && data.password ? data.password : null;
   const mustChangePassword = shouldCreateAccess ? (data.must_change_password || status === 'active') : false;
+  const credEmail = data.createAccess ? nc.email_to : null;
+  const credWa = data.createAccess ? nc.whatsapp_phone : null;
+  const credUrl = data.createAccess ? nc.portal_base_url : null;
 
   const rows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
     INSERT INTO "Proprietario" (
@@ -367,6 +438,10 @@ async function insertOwner(
       subdomain,
       access_email,
       password_hash,
+      last_provisional_password,
+      credential_notify_email,
+      credential_notify_whatsapp,
+      credential_portal_base_url,
       must_change_password,
       "approvedAt",
       "rejectedAt",
@@ -393,6 +468,10 @@ async function insertOwner(
       ${subdomain},
       ${accessEmail},
       ${passwordHash},
+      ${lastProvisional},
+      ${credEmail},
+      ${credWa},
+      ${credUrl},
       ${mustChangePassword},
       ${status === 'active' ? new Date() : null},
       ${null},
@@ -414,6 +493,7 @@ async function insertOwner(
       cidade,
       estado,
       observacoes,
+      foto_url,
       warehouse_id,
       status,
       origem,
@@ -421,6 +501,10 @@ async function insertOwner(
       access_email,
       must_change_password,
       password_hash,
+      last_provisional_password,
+      credential_notify_email,
+      credential_notify_whatsapp,
+      credential_portal_base_url,
       "approvedAt",
       "rejectedAt",
       "createdAt",
@@ -468,10 +552,27 @@ async function create(req: import('express').Request, res: import('express').Res
         return;
       }
     }
+    const nc = normalizeNotifyCredentialStorage(req.body as Record<string, unknown>);
     const row = await insertOwner(data, {
       forceOrigem: data.origem ?? undefined,
-    });
-    res.status(201).json(formatProprietario(row));
+    }, nc);
+    const notify = parseNotifyCredentials(req.body as Record<string, unknown>);
+    let notifications: Awaited<ReturnType<typeof dispatchProprietarioCredentialNotifications>> | null =
+      null;
+    if (notify && data.password && data.createAccess) {
+      try {
+        notifications = await dispatchProprietarioCredentialNotifications({
+          nome: data.nome,
+          passwordPlain: data.password,
+          accessEmail: String(data.access_email || data.email || ''),
+          subdomain: String(data.subdomain || ''),
+          notify,
+        });
+      } catch (e) {
+        console.error('Erro ao enviar credenciais:', e);
+      }
+    }
+    res.status(201).json({ ...formatProprietario(row), notifications });
   } catch (error) {
     console.error('Erro ao criar proprietário:', error);
     const message =
@@ -516,11 +617,6 @@ async function update(req: import('express').Request, res: import('express').Res
       return;
     }
     const data = normalizeAccessBody(req.body as Record<string, unknown>);
-    if (data.createAccess && !data.password) {
-      res.status(400).json({ message: 'Informe a senha provisória para criar o acesso' });
-      return;
-    }
-    const passwordHash = data.password ? await bcrypt.hash(data.password, 10) : null;
     const currentRows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT
         id,
@@ -539,6 +635,12 @@ async function update(req: import('express').Request, res: import('express').Res
       return;
     }
     const current = currentRows[0];
+    const hasExistingPassword = Boolean(current.password_hash);
+    if (data.createAccess && !data.password && !hasExistingPassword) {
+      res.status(400).json({ message: 'Informe a senha provisória para criar o acesso' });
+      return;
+    }
+    const passwordHash = data.password ? await bcrypt.hash(data.password, 10) : null;
     const nextStatus = resolveUpdatedStatus(current, data.status);
     const nextOrigem = data.origem ? normalizeOrigem(data.origem, String(current.origem ?? 'erp')) : String(current.origem ?? 'erp');
     const wantsAccessUpdate =
@@ -577,7 +679,22 @@ async function update(req: import('express').Request, res: import('express').Res
       Prisma.sql`"updatedAt" = NOW()`,
     ];
     if (passwordHash) {
-      setParts.splice(18, 0, Prisma.sql`password_hash = ${passwordHash}`);
+      setParts.splice(
+        18,
+        0,
+        Prisma.sql`password_hash = ${passwordHash}`,
+        Prisma.sql`last_provisional_password = ${data.password}`,
+      );
+    }
+    const nc = normalizeNotifyCredentialStorage(req.body as Record<string, unknown>);
+    if (data.createAccess) {
+      setParts.splice(
+        setParts.length - 1,
+        0,
+        Prisma.sql`credential_notify_email = ${nc.email_to}`,
+        Prisma.sql`credential_notify_whatsapp = ${nc.whatsapp_phone}`,
+        Prisma.sql`credential_portal_base_url = ${nc.portal_base_url}`,
+      );
     }
     const rows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       UPDATE "Proprietario"
@@ -598,11 +715,16 @@ async function update(req: import('express').Request, res: import('express').Res
         cidade,
         estado,
         observacoes,
+        foto_url,
         warehouse_id,
         status,
         origem,
         subdomain,
         access_email,
+        last_provisional_password,
+        credential_notify_email,
+        credential_notify_whatsapp,
+        credential_portal_base_url,
         must_change_password,
         password_hash,
       "approvedAt",
@@ -610,7 +732,29 @@ async function update(req: import('express').Request, res: import('express').Res
         "createdAt",
         "updatedAt"
     `);
-    res.json(formatProprietario(rows[0]));
+    const saved = formatProprietario(rows[0]);
+    const notify = parseNotifyCredentials(req.body as Record<string, unknown>);
+    let notifications: Awaited<ReturnType<typeof dispatchProprietarioCredentialNotifications>> | null =
+      null;
+    const plainForNotify = data.password
+      ? data.password
+      : null;
+    if (notify && data.createAccess && plainForNotify) {
+      try {
+        notifications = await dispatchProprietarioCredentialNotifications({
+          nome: data.nome,
+          passwordPlain: plainForNotify,
+          accessEmail: String(
+            data.access_email ?? saved.access_email ?? data.email ?? saved.email ?? '',
+          ),
+          subdomain: String(data.subdomain ?? saved.subdomain ?? ''),
+          notify,
+        });
+      } catch (e) {
+        console.error('Erro ao enviar credenciais:', e);
+      }
+    }
+    res.json({ ...saved, notifications });
   } catch (error) {
     console.error('Erro ao atualizar proprietário:', error);
     res.status(500).json({ message: 'Erro ao atualizar proprietário' });
@@ -644,6 +788,7 @@ async function approve(req: import('express').Request, res: import('express').Re
         cidade,
         estado,
         observacoes,
+        foto_url,
         warehouse_id,
         status,
         origem,
@@ -694,6 +839,7 @@ async function reject(req: import('express').Request, res: import('express').Res
         cidade,
         estado,
         observacoes,
+        foto_url,
         warehouse_id,
         status,
         origem,
@@ -744,6 +890,7 @@ async function activate(req: import('express').Request, res: import('express').R
         cidade,
         estado,
         observacoes,
+        foto_url,
         warehouse_id,
         status,
         origem,
@@ -792,6 +939,7 @@ async function deactivate(req: import('express').Request, res: import('express')
         cidade,
         estado,
         observacoes,
+        foto_url,
         warehouse_id,
         status,
         origem,
@@ -847,6 +995,7 @@ async function login(req: import('express').Request, res: import('express').Resp
         access_email,
         must_change_password,
         password_hash,
+        foto_url,
         "approvedAt",
         "rejectedAt",
         "createdAt",
@@ -910,6 +1059,22 @@ async function remove(req: import('express').Request, res: import('express').Res
   }
 }
 
+async function generateProvisionalPasswordRoute(
+  _req: import('express').Request,
+  res: import('express').Response,
+) {
+  try {
+    await ensureProprietarioSchema();
+    const password = await generateUniqueProvisionalPassword();
+    res.json({ password });
+  } catch (error) {
+    console.error('Erro ao gerar senha provisória (fallback sem deduplicação no banco):', error);
+    res.json({ password: generateProvisionalPassword() });
+  }
+}
+
+router.post('/credentials/generate-password', generateProvisionalPasswordRoute);
+router.post('/credentials/generate-password/', generateProvisionalPasswordRoute);
 router.post('/auth/login', login);
 router.post('/public/register', publicRegister);
 router.get('/list', list);

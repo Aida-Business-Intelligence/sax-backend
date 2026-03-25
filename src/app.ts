@@ -11,6 +11,7 @@ import clientRoutes from './routes/client.js';
 import usersRoutes from './routes/users.js';
 import rolesRoutes from './routes/roles.js';
 import proprietariosRoutes from './routes/proprietarios.js';
+import ownerPortalRoutes from './routes/owner-portal.js';
 import sectionsRoutes from './routes/sections.js';
 import tagsRoutes from './routes/tags.js';
 import propertiesPublicRoutes from './routes/properties-public.js';
@@ -25,10 +26,16 @@ import filesRoutes from './routes/files.js';
 import fileStorageRoutes from './routes/file-storage.js';
 import integrationsRoutes from './routes/integrations.js';
 import mailRoutes from './routes/mail.js';
+import helpdeskRoutes from './routes/helpdesk.js';
 
 const app = express();
 
-app.use(helmet());
+// Permite <img src="http://api:4000/uploads/..."> a partir do front em outra origem (dev: portas diferentes).
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
 app.use(
   cors({
     origin: config.corsOrigin,
@@ -58,6 +65,7 @@ app.use('/api/warehouse', warehouseRoutes);
 app.use('/api/client', clientRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/roles', rolesRoutes);
+app.use('/api/proprietarios/portal', ownerPortalRoutes);
 app.use('/api/proprietarios', proprietariosRoutes);
 app.use('/api/sections', sectionsRoutes);
 app.use('/api/tags', tagsRoutes);
@@ -73,6 +81,7 @@ app.use('/api/files', filesRoutes);
 app.use('/api/file_storage', fileStorageRoutes);
 app.use('/api/integrations', integrationsRoutes);
 app.use('/api/mail', mailRoutes);
+app.use('/api/helpdesk', helpdeskRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'sax-backend' });

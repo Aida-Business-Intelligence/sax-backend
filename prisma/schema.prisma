@@ -29,6 +29,10 @@ model User {
   warehouse   Warehouse? @relation(fields: [warehouseId], references: [id])
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  helpDeskAssignedTickets HelpDeskTicket[] @relation("HelpDeskAssigned")
+  helpDeskCreatedTickets  HelpDeskTicket[] @relation("HelpDeskCreatedBy")
+  helpDeskMessages        HelpDeskMessage[] @relation("HelpDeskMsgUser")
 }
 
 model Warehouse {
@@ -49,6 +53,9 @@ model Warehouse {
   cnpj          String?
   ie            String?   // inscrição estadual
   im            String?   // inscrição municipal
+  cnae          String?
+  ibgeUfId      String?   @map("ibge_uf_id")
+  ibgeMunicipioId String? @map("ibge_municipio_id")
   note          String?   // observações
   display       Boolean   @default(true) // ativo/inativo
   createdAt     DateTime  @default(now())
@@ -57,6 +64,7 @@ model Warehouse {
   clients       Client[]
   proprietarios Proprietario[]
   properties    Property[]
+  helpDeskTickets HelpDeskTicket[]
 }
 
 // ----------------------------------------------------------------------
@@ -110,12 +118,22 @@ model Proprietario {
   subdomain       String?   @unique
   access_email    String?
   password_hash   String?
+  // Última senha provisória definida pelo PDV (exibir na edição; login usa password_hash).
+  lastProvisionalPassword String? @map("last_provisional_password")
+  credentialNotifyEmail        String? @map("credential_notify_email")
+  credentialNotifyWhatsapp     String? @map("credential_notify_whatsapp")
+  credentialPortalBaseUrl      String? @map("credential_portal_base_url")
   must_change_password Boolean @default(false)
   approvedAt      DateTime?
   rejectedAt      DateTime?
+  /// JSON: preferências de privacidade do portal (ex.: { marketingEmail: true })
+  privacyJson     String?   @map("privacy_json")
+  /// URL relativa da foto de perfil (ex.: /uploads/proprietarios/avatars/...)
+  fotoUrl         String?   @map("foto_url")
   warehouse       Warehouse @relation(fields: [warehouse_id], references: [id])
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+  helpDeskTickets HelpDeskTicket[]
 }
 
 model Tag {
@@ -162,6 +180,7 @@ model Property {
   bathrooms    Int?
   garage       Int?
   address      String?
+  numero       String?  // número do imóvel (logradouro + número no mapa)
   city         String?
   neighborhood String?
   state        String?
@@ -169,11 +188,15 @@ model Property {
   builder      String?  // Construtora
   latitude     Decimal? @db.Decimal(10, 7)
   longitude    Decimal? @db.Decimal(10, 7)
+  // Hash do endereço na última geocodificação (logradouro+número+bairro+cidade+UF+CEP)
+  geoAddressKey String?
   warehouseId  String
   warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   clientId     String?
   client       Client?   @relation(fields: [clientId], references: [id])
   proprietarioId String?  // ID do módulo Proprietários
+  /// null = cadastro master; pending = aguardando aprovação; approved/rejected = fluxo portal proprietário
+  ownerSubmissionStatus String? @map("owner_submission_status")
   comodidades  String?   // JSON array ["piscina","elevador",...]
   mobiliado    Boolean?  @default(false)
   aceita_pets  Boolean?  @default(false)
@@ -187,6 +210,8 @@ model Property {
   media        PropertyMedia[]
   tags         PropertyTag[]
   sections     PropertySection[]
+
+  @@unique([warehouseId, ref], map: "Property_warehouseId_ref_key")
 }
 
 model PropertyTag {
@@ -228,6 +253,9 @@ model SiteConfig {
   aboutContent        String?  // JSON: textos e links da página Sobre nós
   footerContent       String?  // JSON: rodapé (creci, copyright, redes sociais)
   transactionTypes    String?  // JSON array [{ value, label }] - tipos no cadastro (Venda, Aluguel, Crowdfunding, etc.)
+  exclusiveProjectsContent String? // JSON: textos e imagens da página /projetos-exclusivos
+  imoveisContent      String?  // JSON: CTA WhatsApp na página de detalhe do imóvel, etc.
+  proprietariosContent String? // JSON: textos da página /para-proprietarios (sax-site)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
@@ -460,6 +488,70 @@ model CloudIntegration {
 
   @@unique([userId, provider])
   @@index([userId])
+}
+
+// ----------------------------------------------------------------------
+// Help Desk / SAC (proprietário ↔ equipe master)
+// ----------------------------------------------------------------------
+
+model HelpDeskTicket {
+  id              String   @id @default(cuid())
+  number          Int      @unique
+  protocol        String   @unique // protocolo único (ex.: SAX-…), gerado na criação
+  title           String
+  status          String   @default("OPEN") // OPEN | PENDING | IN_PROGRESS | RESOLVED | CLOSED
+  priority        String   @default("NORMAL") // LOW | NORMAL | HIGH | URGENT
+  queue           String   @default("geral")
+  proprietarioId  String
+  proprietario    Proprietario @relation(fields: [proprietarioId], references: [id], onDelete: Cascade)
+  warehouseId     String?
+  warehouse       Warehouse? @relation(fields: [warehouseId], references: [id])
+  assignedUserId  String?
+  assignedUser    User?    @relation("HelpDeskAssigned", fields: [assignedUserId], references: [id])
+  createdByStaff  Boolean  @default(false)
+  createdByUserId String?
+  createdByUser   User?    @relation("HelpDeskCreatedBy", fields: [createdByUserId], references: [id])
+  firstMessageAt  DateTime?
+  lastMessageAt   DateTime?
+  closedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  messages        HelpDeskMessage[]
+  events          HelpDeskTicketEvent[]
+
+  @@index([status])
+  @@index([proprietarioId])
+  @@index([assignedUserId])
+  @@index([queue])
+  @@index([createdAt])
+}
+
+model HelpDeskMessage {
+  id            String   @id @default(cuid())
+  ticketId      String
+  ticket        HelpDeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  body          String
+  imageUrl      String? // /uploads/helpdesk/{ticketId}/… (opcional; proprietário pode anexar imagem)
+  authorType    String // owner | staff | system
+  authorUserId  String?
+  authorUser    User?    @relation("HelpDeskMsgUser", fields: [authorUserId], references: [id])
+  readByOwnerAt DateTime?
+  readByStaffAt DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+model HelpDeskTicketEvent {
+  id          String   @id @default(cuid())
+  ticketId    String
+  ticket      HelpDeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  type        String // created | status_change | priority_change | assign | queue_change | message | closed
+  payload     String? // JSON
+  actorUserId String?
+  createdAt   DateTime @default(now())
+
+  @@index([ticketId])
 }
 
 // ----------------------------------------------------------------------
