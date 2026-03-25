@@ -27,6 +27,7 @@ import fileStorageRoutes from './routes/file-storage.js';
 import integrationsRoutes from './routes/integrations.js';
 import mailRoutes from './routes/mail.js';
 import helpdeskRoutes from './routes/helpdesk.js';
+import settingsRoutes from './routes/settings.js';
 
 const app = express();
 
@@ -85,6 +86,7 @@ app.use('/api/file_storage', fileStorageRoutes);
 app.use('/api/integrations', integrationsRoutes);
 app.use('/api/mail', mailRoutes);
 app.use('/api/helpdesk', helpdeskRoutes);
+app.use('/api/settings', settingsRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'sax-backend' });
