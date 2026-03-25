@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { buildGeoAddressKey, geocodeBrazilAddress } from '../lib/geocode.js';
 
 const router = Router();
 
@@ -55,6 +57,7 @@ router.get('/', async (req, res, next) => {
           city: p.city ?? '',
           state: p.state ?? '',
           street: p.address ?? undefined,
+          number: p.numero ?? undefined,
           zip: p.zip ?? undefined,
           lat: p.latitude ? Number(p.latitude) : undefined,
           lng: p.longitude ? Number(p.longitude) : undefined,
@@ -103,6 +106,48 @@ router.get('/by-slug/:slug', async (req, res, next) => {
     const priceVenda = p.priceVenda != null ? Number(p.priceVenda) : null;
     const priceAluguel = p.priceAluguel != null ? Number(p.priceAluguel) : null;
     const priceCrowdfunding = p.priceCrowdfunding != null ? Number(p.priceCrowdfunding) : null;
+
+    let latOut = p.latitude != null ? Number(p.latitude) : undefined;
+    let lngOut = p.longitude != null ? Number(p.longitude) : undefined;
+    const hasCoords =
+      latOut != null &&
+      lngOut != null &&
+      Number.isFinite(latOut) &&
+      Number.isFinite(lngOut);
+
+    const addrParts = {
+      street: p.address,
+      number: p.numero,
+      neighborhood: p.neighborhood,
+      city: p.city,
+      state: p.state,
+      zip: p.zip,
+    };
+    const currentKey = buildGeoAddressKey(addrParts);
+    const canTryGeo = Boolean(p.city || p.state || p.address || p.numero);
+    /** Sem coordenadas, ou endereço/número mudou desde a última geocodificação → recalcula o pin (inclui número no texto enviado ao Mapbox) */
+    const needsGeo = canTryGeo && (!hasCoords || p.geoAddressKey !== currentKey);
+
+    if (needsGeo) {
+      const geo = await geocodeBrazilAddress(addrParts);
+      if (geo) {
+        latOut = geo.lat;
+        lngOut = geo.lng;
+        try {
+          await prisma.property.update({
+            where: { id: p.id },
+            data: {
+              latitude: new Prisma.Decimal(geo.lat),
+              longitude: new Prisma.Decimal(geo.lng),
+              geoAddressKey: currentKey,
+            },
+          });
+        } catch {
+          // ignora falha ao persistir; resposta já leva lat/lng
+        }
+      }
+    }
+
     res.json({
       id: p.id,
       ref: p.ref ?? null,
@@ -126,9 +171,10 @@ router.get('/by-slug/:slug', async (req, res, next) => {
         city: p.city ?? '',
         state: p.state ?? '',
         street: p.address ?? undefined,
+        number: p.numero ?? undefined,
         zip: p.zip ?? undefined,
-        lat: p.latitude ? Number(p.latitude) : undefined,
-        lng: p.longitude ? Number(p.longitude) : undefined,
+        lat: latOut,
+        lng: lngOut,
       },
       coverImage: p.media?.[0]
         ? { url: p.media[0].url, alt: p.title, width: 1200, height: 800 }

@@ -1,0 +1,3 @@
+ALTER TABLE "Warehouse" ADD COLUMN IF NOT EXISTS "cnae" TEXT;
+ALTER TABLE "Warehouse" ADD COLUMN IF NOT EXISTS "ibge_uf_id" TEXT;
+ALTER TABLE "Warehouse" ADD COLUMN IF NOT EXISTS "ibge_municipio_id" TEXT;
