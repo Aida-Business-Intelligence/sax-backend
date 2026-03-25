@@ -47,6 +47,9 @@ app.use(express.json());
 // Arquivos enviados (imagens de imóveis, logos, etc.)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
+// Confia no primeiro proxy reverso (nginx/traefik) para leitura correta do IP real
+app.set('trust proxy', 1);
+
 // Rate limit: em dev mais alto para não travar; em produção protege o servidor
 const isDev = config.nodeEnv === 'development';
 app.use(
