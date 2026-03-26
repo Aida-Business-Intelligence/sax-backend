@@ -1,39 +1,26 @@
-import path from 'path';
-import fs from 'fs';
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { uploadPrivate, deleteObject, getPresignedUrl, keys } from '../lib/storage.js';
+import { SIZE } from '../lib/file-validation.js';
 
 const router = Router();
-const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'files');
 
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const safe = Date.now() + '-' + (file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
-    cb(null, safe);
-  },
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: SIZE.PDV_FILE },
 });
-const upload = multer({ storage });
 
 router.use(authMiddleware);
 
-function formatFile(row: { id: string; name: string; size: number; type: string | null; path: string; isFavorite: boolean; folderId: string; createdAt: Date }) {
-  const basename = path.basename(row.path);
-  const baseUrl = process.env.SAX_API_URL || '';
-  const fileUrl = baseUrl ? `${baseUrl.replace(/\/$/, '')}/uploads/files/${basename}` : `/uploads/files/${basename}`;
+function formatFileMeta(row: { id: string; name: string; size: number; type: string | null; path: string; isFavorite: boolean; folderId: string; createdAt: Date }) {
   return {
     id: row.id,
     name: row.name,
     size: String(row.size),
     type: row.type || '',
     path: row.path,
-    url: fileUrl,
     is_favorite: row.isFavorite,
     folder_id: row.folderId,
     created_at: row.createdAt,
@@ -76,7 +63,9 @@ router.post('/create', upload.array('file[]', 20), async (req: Request, res: Res
       const name = (nameArr[i] ?? file.originalname ?? 'file').trim();
       const size = Number(sizeArr[i]) || file.size || 0;
       const type = typeArr[i] ?? file.mimetype ?? '';
-      const relativePath = path.join('uploads', 'files', file.filename);
+      const safeName = (file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const key = keys.pdvFile(folderId, `${Date.now()}-${safeName}`);
+      await uploadPrivate(key, file.buffer, file.mimetype || 'application/octet-stream');
 
       const row = await prisma.file.create({
         data: {
@@ -84,7 +73,7 @@ router.post('/create', upload.array('file[]', 20), async (req: Request, res: Res
           name,
           size,
           type: String(type).slice(0, 255),
-          path: relativePath,
+          path: key,
         },
       });
       totalSize += size;
@@ -130,8 +119,16 @@ router.get('/list', async (req: Request, res: Response) => {
       prisma.file.count({ where }),
     ]);
 
+    const data = await Promise.all(
+      items.map(async (row) => {
+        const url = await getPresignedUrl(row.path, 300);
+        // file_path expõe a URL assinada para que o front possa fazer fetch() direto
+        return { ...formatFileMeta(row), url, file_path: url };
+      }),
+    );
+
     res.json({
-      data: items.map(formatFile),
+      data,
       total,
       page,
       limit,
@@ -153,8 +150,7 @@ router.delete('/delete/:id', async (req: Request, res: Response) => {
       res.status(404).json({ status: false, message: 'Arquivo não encontrado' });
       return;
     }
-    const fullPath = path.join(process.cwd(), file.path);
-    if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    await deleteObject(file.path);
     await prisma.file.delete({ where: { id } });
     await prisma.fileFolder.update({
       where: { id: file.folderId },
@@ -181,10 +177,7 @@ router.delete('/bulk_delete_by_folder/:folderId', async (req: Request, res: Resp
       res.status(404).json({ status: false, message: 'Pasta não encontrada' });
       return;
     }
-    for (const file of folder.files) {
-      const fullPath = path.join(process.cwd(), file.path);
-      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-    }
+    await Promise.all(folder.files.map((f) => deleteObject(f.path)));
     await prisma.file.deleteMany({ where: { folderId } });
     await prisma.fileFolder.update({
       where: { id: folderId },
