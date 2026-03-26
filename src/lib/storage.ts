@@ -25,6 +25,25 @@ export function cdnUrl(objectKey: string): string {
 }
 
 /**
+ * Converte URL armazenada (pathname do CDN, path relativo) em URL pública absoluta.
+ * Evita salvar só o pathname do Spaces e o front tentar abrir em localhost:API (imagem quebrada).
+ * Paths em /uploads permanecem relativos ao site/API.
+ */
+export function resolvePropertyMediaPublicUrl(raw: string | null | undefined): string {
+  const u = String(raw ?? '').trim();
+  if (!u) return u;
+  if (/^https?:\/\//i.test(u)) return u;
+  const withLeading = u.startsWith('/') ? u : `/${u}`;
+  if (withLeading.startsWith('/uploads')) return withLeading;
+  let key = u.replace(/^\/+/, '');
+  const pref = String(prefix ?? '').replace(/^\/+|\/+$/g, '');
+  if (pref && key.startsWith('properties/') && !key.startsWith(`${pref}/`)) {
+    key = `${pref}/${key}`;
+  }
+  return cdnUrl(key);
+}
+
+/**
  * Extracts the object key from a CDN URL produced by cdnUrl().
  * Returns null for any URL that does not belong to this Space.
  */
@@ -107,6 +126,7 @@ export const keys = {
     `${prefix}/avatars/${filename}`,
   helpdeskImage: (ticketId: string, filename: string) =>
     `${prefix}/helpdesk/${ticketId}/${filename}`,
+  blogCover: (filename: string) => `${prefix}/blog/covers/${filename}`,
   pdvFile: (folderId: string | null | undefined, filename: string) =>
     folderId
       ? `${prefix}/files/${folderId}/${filename}`

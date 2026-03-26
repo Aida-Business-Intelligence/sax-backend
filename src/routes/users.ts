@@ -79,6 +79,87 @@ router.post('/list', listHandler);
 router.post('/list/', listHandler);
 
 /**
+ * POST /api/users/create
+ * POST /api/users/create/
+ * Cria usuário (PDV admin > Usuários > Novo).
+ */
+async function createUser(req: Request, res: Response) {
+  try {
+    const b = (req.body || {}) as {
+      firstname?: string;
+      lastname?: string;
+      email?: string;
+      password?: string;
+      role?: string;
+      warehouse?: string[];
+      phonenumber?: string;
+    };
+    const email = (b.email && String(b.email).trim().toLowerCase()) || '';
+    const password = (b.password && String(b.password).trim()) || '';
+    if (!email || !password) {
+      res.status(400).json({ message: 'E-mail e senha são obrigatórios' });
+      return;
+    }
+    if (password.length < 6) {
+      res.status(400).json({ message: 'Senha deve ter pelo menos 6 caracteres' });
+      return;
+    }
+    const roleId = b.role && String(b.role).trim();
+    if (!roleId) {
+      res.status(400).json({ message: 'Função (role) é obrigatória' });
+      return;
+    }
+    const roleExists = await prisma.role.findUnique({ where: { id: roleId } });
+    if (!roleExists) {
+      res.status(400).json({ message: 'Função (role) inválida ou não encontrada' });
+      return;
+    }
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      res.status(409).json({ message: 'Já existe um usuário com este e-mail' });
+      return;
+    }
+    const name = [b.firstname, b.lastname].filter(Boolean).join(' ').trim() || email.split('@')[0];
+    const rawWarehouse = Array.isArray(b.warehouse) && b.warehouse[0] ? String(b.warehouse[0]).trim() : null;
+    let warehouseId: string | null = null;
+    if (rawWarehouse) {
+      const warehouseExists = await prisma.warehouse.findUnique({ where: { id: rawWarehouse } });
+      if (!warehouseExists) {
+        res.status(400).json({ message: 'Loja (warehouse) inválida ou não encontrada' });
+        return;
+      }
+      warehouseId = rawWarehouse;
+    }
+    const hashed = await bcrypt.hash(password, 10);
+    const phone = b.phonenumber ? String(b.phonenumber).trim() : null;
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashed,
+        name,
+        roleId,
+        warehouseId,
+        ...(phone ? { phone } : {}),
+        active: true,
+      },
+    });
+
+    res.status(201).json({
+      data: { staffid: user.id },
+      status: true,
+      message: 'Usuário criado com sucesso',
+    });
+  } catch (e) {
+    console.error('users create error', e);
+    res.status(500).json({ message: 'Erro ao criar usuário' });
+  }
+}
+
+router.post('/create', createUser);
+router.post('/create/', createUser);
+
+/**
  * GET /api/users/get/:id
  * Retorna um usuário para edição (formato esperado pelo PDV).
  */
@@ -91,7 +172,11 @@ async function getById(req: Request, res: Response) {
     }
     const u = await prisma.user.findUnique({
       where: { id },
-      include: { role: true, warehouse: true },
+      include: {
+        role: true,
+        warehouse: true,
+        hrEmployee: { select: { id: true, fullName: true, status: true } },
+      },
     });
     if (!u) {
       res.status(404).json({ message: 'Usuário não encontrado' });
@@ -100,6 +185,7 @@ async function getById(req: Request, res: Response) {
     const nameParts = (u.name || '').trim().split(/\s+/);
     const firstname = nameParts[0] || u.email?.split('@')[0] || '';
     const lastname = nameParts.slice(1).join(' ') || '';
+    const hr = (u as { hrEmployee?: { id: string; fullName: string; status: string } | null }).hrEmployee;
     const data = {
       staffid: u.id,
       firstname,
@@ -110,6 +196,9 @@ async function getById(req: Request, res: Response) {
       role_name: u.role?.name ?? '',
       warehouse: u.warehouseId ? [u.warehouseId] : [],
       admin: u.role?.name === 'Super Admin' ? '1' : '0',
+      hr_employee_id: hr?.id ?? null,
+      hr_employee_name: hr?.fullName ?? null,
+      hr_employee_status: hr?.status ?? null,
     };
     res.json({ data });
   } catch (e) {
