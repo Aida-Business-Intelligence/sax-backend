@@ -127,6 +127,7 @@ export const keys = {
   helpdeskImage: (ticketId: string, filename: string) =>
     `${prefix}/helpdesk/${ticketId}/${filename}`,
   blogCover: (filename: string) => `${prefix}/blog/covers/${filename}`,
+  siteStory: (storyId: string, filename: string) => `${prefix}/site/stories/${storyId}/${filename}`,
   pdvFile: (folderId: string | null | undefined, filename: string) =>
     folderId
       ? `${prefix}/files/${folderId}/${filename}`

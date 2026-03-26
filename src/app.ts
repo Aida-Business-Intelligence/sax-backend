@@ -29,6 +29,8 @@ import helpdeskRoutes from './routes/helpdesk.js';
 import settingsRoutes from './routes/settings.js';
 import leadsRoutes from './routes/leads.js';
 import hrRoutes from './routes/hr.js';
+import siteStoriesRoutes from './routes/site-stories.js';
+import publicFeedRoutes from './routes/public-feed.js';
 
 const app = express();
 
@@ -71,9 +73,11 @@ app.use('/api/proprietarios/portal', ownerPortalRoutes);
 app.use('/api/proprietarios', proprietariosRoutes);
 app.use('/api/sections', sectionsRoutes);
 app.use('/api/tags', tagsRoutes);
+app.use('/api/public/feed', publicFeedRoutes);
 app.use('/api/properties', propertiesPublicRoutes);
 app.use('/api/propriedades', propriedadesRoutes);
 app.use('/api/site-config', siteConfigRoutes);
+app.use('/api/site-stories', siteStoriesRoutes);
 app.use('/api/blog', blogRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/tracking', trackingRoutes);

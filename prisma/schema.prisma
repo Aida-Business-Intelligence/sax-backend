@@ -37,6 +37,7 @@ model User {
   crmLeadsAssigned        CrmLead[]        @relation("CrmLeadAssignee")
   crmLeadInteractions     CrmLeadInteraction[] @relation("CrmLeadInteractionAuthor")
   hrEmployee              HrEmployee?
+  siteStoriesCreated      SiteStory[] @relation("SiteStoryAuthor")
 }
 
 model Warehouse {
@@ -71,6 +72,7 @@ model Warehouse {
   helpDeskTickets HelpDeskTicket[]
   crmLeads      CrmLead[]
   hrEmployees   HrEmployee[]
+  siteStories   SiteStory[]
 }
 
 /// Colaborador (RH): ficha de pessoa física; opcionalmente vinculado a um User (credencial do sistema).
@@ -296,8 +298,38 @@ model SiteConfig {
   proprietariosContent String? // JSON: textos da página /para-proprietarios (sax-site)
   /// Funil "Modo Caça" no sax-site (overlay gamificado de captura).
   huntModeEnabled     Boolean  @default(false)
+  /// Conta Instagram Business (Graph API) — ID numérico da conta conectada ao Facebook Page.
+  instagramBusinessAccountId String? @map("instagram_business_account_id")
+  /// Token de longa duração (armazenar com cuidado em produção).
+  instagramAccessToken       String? @map("instagram_access_token") @db.Text
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+}
+
+/// Stories estilo Instagram publicadas no PDV e exibidas no sax-site (/feed).
+model SiteStory {
+  id                String    @id @default(cuid())
+  warehouseId       String?   @map("warehouse_id")
+  imageUrl          String    @map("image_url")
+  caption           String?
+  /// Texto curto abaixo da bolha no /feed (ex.: construtora, bairro), estilo “nome” do Instagram.
+  bubbleLabel       String?   @map("bubble_label") @db.VarChar(80)
+  /// JSON: { textLayers?: [...], linkLayers?: [...] } — posições em % do container (0–100).
+  overlays          Json?
+  sortOrder         Int       @default(0) @map("sort_order")
+  published         Boolean   @default(true)
+  publishedAt       DateTime  @default(now()) @map("published_at")
+  expiresAt         DateTime? @map("expires_at")
+  createdByUserId   String?   @map("created_by_user_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  createdBy User?      @relation("SiteStoryAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([published, sortOrder])
+  @@index([warehouseId])
+  @@map("site_stories")
 }
 
 // Blog do site: cadastrado no PDV (admin), exibido no sax-site no menu Blog.
