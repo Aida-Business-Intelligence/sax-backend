@@ -4,12 +4,16 @@ import { config } from '../config.js';
 
 const { endpoint, region, key, secret, bucket, prefix } = config.spaces;
 
+if (!endpoint) {
+  throw new Error(
+    'DO_SPACES_ENDPOINT is not set. Add it to your environment variables (e.g. https://sfo3.digitaloceanspaces.com).'
+  );
+}
+
 const s3 = new S3Client({
   endpoint,
   region,
   credentials: { accessKeyId: key, secretAccessKey: secret },
-  // Force path-style so the bucket name appears in the path, not subdomain.
-  // Required for DigitalOcean Spaces.
   forcePathStyle: false,
 });
 
