@@ -1,5 +1,4 @@
-import path from 'path';
-import fs from 'fs';
+import multer from 'multer';
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
@@ -11,19 +10,19 @@ import {
 } from '../lib/property-ref.js';
 import { buildGeoAddressKey, geocodeBrazilAddress } from '../lib/geocode.js';
 import { buildPropertyListWhere } from '../lib/property-list-filters.js';
+import { uploadPublic, deleteObject, keyFromCdnUrl, keys } from '../lib/storage.js';
+import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
 
 const router = Router();
 
-const UPLOAD_PROPERTIES_DIR = path.join(process.cwd(), 'uploads', 'properties');
-const ALLOWED_IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-
-function ensurePropertyUploadDir(propertyId: string) {
-  const dir = path.join(UPLOAD_PROPERTIES_DIR, propertyId);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
+const propertyImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: SIZE.PROPERTY_IMAGE },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
 
 export { getNextRef } from '../lib/property-ref.js';
 
@@ -276,89 +275,50 @@ router.get('/get/:id/', getOne);
 
 /**
  * POST /api/propriedades/upload/:propertyId - Envia uma ou mais imagens para a propriedade.
- * Multipart/form-data com campo(s) "file". Cria PropertyMedia e salva em uploads/properties/:propertyId/
+ * Multipart/form-data com campo(s) "file". Cria PropertyMedia e faz upload para DO Spaces.
  */
-router.post('/upload/:propertyId', (req, res) => {
-  const propertyId = req.params.propertyId;
-  if (!propertyId) {
-    res.status(400).json({ success: false, message: 'propertyId é obrigatório' });
-    return;
-  }
-  if (!req.is('multipart/form-data')) {
-    res.status(400).json({ success: false, message: 'Content-Type deve ser multipart/form-data' });
-    return;
-  }
-  const chunks: Buffer[] = [];
-  req.on('data', (chunk: Buffer) => chunks.push(chunk));
-  req.on('end', async () => {
-    try {
-      const buffer = Buffer.concat(chunks);
-      const contentType = req.headers['content-type'] ?? '';
-      const boundaryMatch = contentType.split('boundary=')[1]?.trim().replace(/^["']|["']$/g, '');
-      const boundary = boundaryMatch ?? '';
-      if (!boundary) {
-        res.status(400).json({ success: false, message: 'Boundary não encontrado' });
-        return;
-      }
-      const boundaryBuf = Buffer.from(`--${boundary}`, 'utf8');
-      const parts: Buffer[] = [];
-      let start = 0;
-      let idx: number;
-      while ((idx = buffer.indexOf(boundaryBuf, start)) !== -1) {
-        if (idx > start) parts.push(buffer.subarray(start, idx));
-        start = idx + boundaryBuf.length;
-        if (buffer[idx + boundaryBuf.length] === 0x2d && buffer[idx + boundaryBuf.length + 1] === 0x2d) break;
-      }
-      const files: { buffer: Buffer; filename: string }[] = [];
-      for (const part of parts) {
-        const headerEnd = part.indexOf('\r\n\r\n');
-        if (headerEnd === -1) continue;
-        const headers = part.subarray(0, headerEnd).toString();
-        const body = part.subarray(headerEnd + 4);
-        const nameMatch = headers.match(/name="([^"]+)"/);
-        const fileMatch = headers.match(/filename="([^"]+)"/);
-        if (nameMatch && (nameMatch[1] === 'file' || nameMatch[1] === 'files[]') && fileMatch) {
-          const filename = fileMatch[1];
-          const fileBuffer = body.subarray(0, body.length - 2);
-          if (fileBuffer.length > 0) files.push({ buffer: fileBuffer, filename });
-        }
-      }
-      if (files.length === 0) {
-        res.status(400).json({ success: false, message: 'Nenhum arquivo enviado no campo "file"' });
-        return;
-      }
-      const existing = await prisma.property.findUnique({ where: { id: propertyId }, include: { media: true } });
-      if (!existing) {
-        res.status(404).json({ success: false, message: 'Propriedade não encontrada' });
-        return;
-      }
-      const maxOrder = existing.media.length > 0
-        ? Math.max(...existing.media.map((m) => m.sortOrder))
-        : -1;
-      ensurePropertyUploadDir(propertyId);
-      const created: { id: string; url: string; sortOrder: number }[] = [];
-      let sortOrder = maxOrder + 1;
-      for (const { buffer: fileBuffer, filename } of files) {
-        const ext = path.extname(filename) || '.jpg';
-        if (!ALLOWED_IMAGE_EXT.includes(ext.toLowerCase())) continue;
-        const safeName = `${Date.now()}-${sortOrder}${ext}`;
-        const filePath = path.join(UPLOAD_PROPERTIES_DIR, propertyId, safeName);
-        fs.writeFileSync(filePath, fileBuffer);
-        const url = `/uploads/properties/${propertyId}/${safeName}`;
-        const m = await prisma.propertyMedia.create({
-          data: { propertyId, url, type: 'image', sortOrder },
-        });
-        created.push({ id: m.id, url: m.url, sortOrder: m.sortOrder });
-        sortOrder += 1;
-      }
-      res.json({ success: true, media: created });
-    } catch (e) {
-      res.status(500).json({ success: false, message: (e as Error).message });
+router.post('/upload/:propertyId', propertyImageUpload.array('file', 20), async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    if (!propertyId) {
+      res.status(400).json({ success: false, message: 'propertyId é obrigatório' });
+      return;
     }
-  });
-  req.on('error', () => {
-    res.status(500).json({ success: false, message: 'Erro ao receber o arquivo' });
-  });
+    const multerFiles = (req.files ?? []) as Express.Multer.File[];
+    if (multerFiles.length === 0) {
+      // Also accept field name "files[]"
+      res.status(400).json({ success: false, message: 'Nenhum arquivo enviado no campo "file"' });
+      return;
+    }
+    const existing = await prisma.property.findUnique({ where: { id: propertyId }, include: { media: true } });
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Propriedade não encontrada' });
+      return;
+    }
+    const maxOrder = existing.media.length > 0
+      ? Math.max(...existing.media.map((m) => m.sortOrder))
+      : -1;
+    const created: { id: string; url: string; sortOrder: number }[] = [];
+    let sortOrder = maxOrder + 1;
+    for (const file of multerFiles) {
+      const validation = validateImage(file.buffer, SIZE.PROPERTY_IMAGE);
+      if (!validation.ok) {
+        res.status(400).json({ success: false, message: validation.error });
+        return;
+      }
+      const ext = safeExtFromMime(validation.mime);
+      const objectKey = keys.propertyImage(propertyId, `${Date.now()}-${sortOrder}${ext}`);
+      const url = await uploadPublic(objectKey, file.buffer, validation.mime);
+      const m = await prisma.propertyMedia.create({
+        data: { propertyId, url, type: 'image', sortOrder },
+      });
+      created.push({ id: m.id, url: m.url, sortOrder: m.sortOrder });
+      sortOrder += 1;
+    }
+    res.json({ success: true, media: created });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 /**
@@ -684,6 +644,14 @@ router.put('/update/:id', async (req, res, next) => {
 
     const mediaList = body.media as Array<{ url: string; sortOrder?: number } | string> | undefined;
     if (Array.isArray(mediaList)) {
+      // Delete removed media objects from Space before clearing DB records
+      const currentMedia = await prisma.propertyMedia.findMany({ where: { propertyId: id }, select: { url: true } });
+      const newUrls = new Set(mediaList.map((item) => (typeof item === 'string' ? item : (item as { url: string }).url)));
+      await Promise.all(
+        currentMedia
+          .filter((m) => !newUrls.has(m.url))
+          .map((m) => deleteObject(keyFromCdnUrl(m.url)))
+      );
       await prisma.propertyMedia.deleteMany({ where: { propertyId: id } });
       if (mediaList.length > 0) {
         const toInsert = mediaList.map((item, i) => {
@@ -729,6 +697,13 @@ router.post('/remove', async (req, res, next) => {
       res.status(400).json({ message: 'Nenhum ID informado' });
       return;
     }
+
+    // Delete media objects from Space before removing DB records
+    const mediaToDelete = await prisma.propertyMedia.findMany({
+      where: { propertyId: { in: ids } },
+      select: { url: true },
+    });
+    await Promise.all(mediaToDelete.map((m) => deleteObject(keyFromCdnUrl(m.url))));
 
     await prisma.property.deleteMany({
       where: {

@@ -14,4 +14,12 @@ export const config = {
   jwtSecret: JWT_SECRET,
   jwtExpiresIn: JWT_EXPIRES_IN,
   nodeEnv: process.env.NODE_ENV ?? 'development',
+  spaces: {
+    endpoint: process.env.DO_SPACES_ENDPOINT ?? '',
+    region: process.env.DO_SPACES_REGION ?? 'sfo3',
+    key: process.env.DO_SPACES_KEY ?? '',
+    secret: process.env.DO_SPACES_SECRET ?? '',
+    bucket: process.env.DO_SPACES_BUCKET ?? 'arvis',
+    prefix: process.env.DO_SPACES_PREFIX ?? 'sax',
+  },
 };
