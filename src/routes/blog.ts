@@ -1,8 +1,48 @@
-import { Router } from 'express';
+import multer from 'multer';
+import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { uploadPublic, keys } from '../lib/storage.js';
+import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
 
 const router = Router();
+
+const blogCoverUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: SIZE.AVATAR },
+  fileFilter: (_req, file, cb) => {
+    cb(null, file.mimetype.startsWith('image/'));
+  },
+});
+
+/**
+ * POST /api/blog/upload-cover — envia capa para o Spaces (público). Requer auth (PDV).
+ */
+router.post(
+  '/upload-cover',
+  authMiddleware,
+  blogCoverUpload.single('file'),
+  async (req: Request, res: Response, next) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ message: 'Nenhum arquivo enviado no campo "file"' });
+        return;
+      }
+      const validation = validateImage(req.file.buffer, SIZE.AVATAR);
+      if (!validation.ok) {
+        res.status(422).json({ message: validation.error });
+        return;
+      }
+      const ext = safeExtFromMime(validation.mime!);
+      const safeBase = (req.file.originalname || 'cover').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+      const key = keys.blogCover(`${Date.now()}-${safeBase}${ext}`);
+      const url = await uploadPublic(key, req.file.buffer, validation.mime!);
+      res.json({ url });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
 
 function slugify(str: string): string {
   return str
@@ -115,12 +155,21 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
 router.post('/', authMiddleware, async (req, res, next) => {
   try {
     const body = req.body as Record<string, unknown>;
-    const title = String(body.title ?? '').trim();
+    const isDraft =
+      body.published === false ||
+      body.published === '0' ||
+      body.draft === true ||
+      body.draft === 'true';
+    let title = String(body.title ?? '').trim();
     const excerpt = String(body.excerpt ?? '').trim();
     const content = String(body.content ?? '').trim();
     if (!title) {
-      res.status(400).json({ message: 'Título é obrigatório' });
-      return;
+      if (isDraft) {
+        title = 'Sem título';
+      } else {
+        res.status(400).json({ message: 'Título é obrigatório' });
+        return;
+      }
     }
     const slugBase = slugify(title);
     let slug = slugBase;
@@ -132,7 +181,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     const tagsJson = JSON.stringify(tags.map((t) => String(t)));
     const coverUrl = body.coverUrl != null ? String(body.coverUrl) : null;
     const authorName = body.authorName != null ? String(body.authorName) : 'Equipe SAX';
-    const published = body.published !== false && body.published !== '0';
+    const published = isDraft ? false : body.published !== false && body.published !== '0';
 
     const row = await prisma.blogPost.create({
       data: {

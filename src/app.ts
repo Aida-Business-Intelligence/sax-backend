@@ -27,6 +27,10 @@ import integrationsRoutes from './routes/integrations.js';
 import mailRoutes from './routes/mail.js';
 import helpdeskRoutes from './routes/helpdesk.js';
 import settingsRoutes from './routes/settings.js';
+import leadsRoutes from './routes/leads.js';
+import hrRoutes from './routes/hr.js';
+import siteStoriesRoutes from './routes/site-stories.js';
+import publicFeedRoutes from './routes/public-feed.js';
 
 const app = express();
 
@@ -69,9 +73,11 @@ app.use('/api/proprietarios/portal', ownerPortalRoutes);
 app.use('/api/proprietarios', proprietariosRoutes);
 app.use('/api/sections', sectionsRoutes);
 app.use('/api/tags', tagsRoutes);
+app.use('/api/public/feed', publicFeedRoutes);
 app.use('/api/properties', propertiesPublicRoutes);
 app.use('/api/propriedades', propriedadesRoutes);
 app.use('/api/site-config', siteConfigRoutes);
+app.use('/api/site-stories', siteStoriesRoutes);
 app.use('/api/blog', blogRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/tracking', trackingRoutes);
@@ -83,6 +89,17 @@ app.use('/api/integrations', integrationsRoutes);
 app.use('/api/mail', mailRoutes);
 app.use('/api/helpdesk', helpdeskRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/leads', leadsRoutes);
+app.use('/api/hr', hrRoutes);
+
+/** Stub: Meta Lead Ads → crm_leads (configurar verify token + Graph API em fase seguinte). */
+app.post('/api/webhooks/meta-leads', (_req, res) => {
+  res.status(501).json({
+    ok: false,
+    message:
+      'Webhook Meta Lead Ads em preparação. Configure o app no Meta, token de verificação e mapeamento de formulários para crm_leads.',
+  });
+});
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'sax-backend' });

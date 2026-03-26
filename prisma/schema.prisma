@@ -34,6 +34,10 @@ model User {
   helpDeskAssignedTickets HelpDeskTicket[] @relation("HelpDeskAssigned")
   helpDeskCreatedTickets  HelpDeskTicket[] @relation("HelpDeskCreatedBy")
   helpDeskMessages        HelpDeskMessage[] @relation("HelpDeskMsgUser")
+  crmLeadsAssigned        CrmLead[]        @relation("CrmLeadAssignee")
+  crmLeadInteractions     CrmLeadInteraction[] @relation("CrmLeadInteractionAuthor")
+  hrEmployee              HrEmployee?
+  siteStoriesCreated      SiteStory[] @relation("SiteStoryAuthor")
 }
 
 model Warehouse {
@@ -66,6 +70,41 @@ model Warehouse {
   proprietarios Proprietario[]
   properties    Property[]
   helpDeskTickets HelpDeskTicket[]
+  crmLeads      CrmLead[]
+  hrEmployees   HrEmployee[]
+  siteStories   SiteStory[]
+}
+
+/// Colaborador (RH): ficha de pessoa física; opcionalmente vinculado a um User (credencial do sistema).
+model HrEmployee {
+  id                String    @id @default(cuid())
+  warehouseId       String?   @map("warehouse_id")
+  fullName          String    @map("full_name")
+  email             String?
+  phone             String?
+  document          String?
+  /// commission_only | fixed_plus_commission | fixed_only
+  employmentType    String    @default("fixed_only") @map("employment_type")
+  /// comercial | financeiro | administrativo | marketing | secretaria | rh | outros
+  departmentCode    String    @default("comercial") @map("department_code")
+  isPartnerBroker   Boolean   @default(false) @map("is_partner_broker")
+  baseSalaryMonthly Decimal?  @map("base_salary_monthly") @db.Decimal(14, 2)
+  commissionNotes   String?   @map("commission_notes")
+  notes             String?
+  status            String    @default("active")
+  userId            String?   @unique @map("user_id")
+  hiredAt           DateTime? @map("hired_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([warehouseId])
+  @@index([departmentCode])
+  @@index([status])
+  @@index([employmentType])
+  @@map("hr_employees")
 }
 
 // ----------------------------------------------------------------------
@@ -257,8 +296,40 @@ model SiteConfig {
   exclusiveProjectsContent String? // JSON: textos e imagens da página /projetos-exclusivos
   imoveisContent      String?  // JSON: CTA WhatsApp na página de detalhe do imóvel, etc.
   proprietariosContent String? // JSON: textos da página /para-proprietarios (sax-site)
+  /// Funil "Modo Caça" no sax-site (overlay gamificado de captura).
+  huntModeEnabled     Boolean  @default(false)
+  /// Conta Instagram Business (Graph API) — ID numérico da conta conectada ao Facebook Page.
+  instagramBusinessAccountId String? @map("instagram_business_account_id")
+  /// Token de longa duração (armazenar com cuidado em produção).
+  instagramAccessToken       String? @map("instagram_access_token") @db.Text
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+}
+
+/// Stories estilo Instagram publicadas no PDV e exibidas no sax-site (/feed).
+model SiteStory {
+  id                String    @id @default(cuid())
+  warehouseId       String?   @map("warehouse_id")
+  imageUrl          String    @map("image_url")
+  caption           String?
+  /// Texto curto abaixo da bolha no /feed (ex.: construtora, bairro), estilo “nome” do Instagram.
+  bubbleLabel       String?   @map("bubble_label") @db.VarChar(80)
+  /// JSON: { textLayers?: [...], linkLayers?: [...] } — posições em % do container (0–100).
+  overlays          Json?
+  sortOrder         Int       @default(0) @map("sort_order")
+  published         Boolean   @default(true)
+  publishedAt       DateTime  @default(now()) @map("published_at")
+  expiresAt         DateTime? @map("expires_at")
+  createdByUserId   String?   @map("created_by_user_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  createdBy User?      @relation("SiteStoryAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([published, sortOrder])
+  @@index([warehouseId])
+  @@map("site_stories")
 }
 
 // Blog do site: cadastrado no PDV (admin), exibido no sax-site no menu Blog.
@@ -322,6 +393,110 @@ model SiteLead {
   @@index([phone])
 }
 
+/// Lead comercial unificado (PDV /leads): site, Modo Caça, Meta Ads (futuro), manual.
+model CrmLead {
+  id                      String    @id @default(cuid())
+  warehouseId             String?   @map("warehouse_id")
+  trackingVisitorId       String?   @unique @map("tracking_visitor_id")
+  name                    String?
+  email                   String?
+  phone                   String?
+  cpf                     String?
+  pipelineStage           String    @default("novo") @map("pipeline_stage")
+  source                  String    @default("manual")
+  sourceDetail            String?   @map("source_detail")
+  adTitle                 String?   @map("ad_title")
+  adImageUrl              String?   @map("ad_image_url")
+  adLocation              String?   @map("ad_location")
+  interestPropertyType    String?   @map("interest_property_type")
+  interestTransactionType String?   @map("interest_transaction_type")
+  notes                   String?
+  score                   Int       @default(0)
+  lastInteractionAt       DateTime? @map("last_interaction_at")
+  assignedUserId          String?   @map("assigned_user_id")
+  metaLeadId              String?   @map("meta_lead_id")
+  metaFormId              String?   @map("meta_form_id")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  warehouse    Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  assignedUser User?      @relation("CrmLeadAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  deals        CrmLeadDeal[]
+  interactions CrmLeadInteraction[]
+  tasks        CrmLeadTask[]
+
+  @@index([warehouseId])
+  @@index([pipelineStage])
+  @@index([source])
+  @@index([phone])
+  @@index([createdAt])
+  @@map("crm_leads")
+}
+
+model CrmLeadDeal {
+  id                String    @id @default(cuid())
+  crmLeadId         String    @map("crm_lead_id")
+  title             String
+  value             Decimal?  @db.Decimal(14, 2)
+  currency          String    @default("BRL")
+  stage             String    @default("prospeccao")
+  expectedCloseAt   DateTime? @map("expected_close_at")
+  description       String?
+  internalNotes     String?   @map("internal_notes")
+  probability       Int?
+  transactionType   String?   @map("transaction_type")
+  propertyRef       String?   @map("property_ref")
+  responsible       String?
+  commissionPct     Decimal?  @map("commission_pct") @db.Decimal(5, 2)
+  paymentMethod     String?   @map("payment_method")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  crmLead CrmLead @relation(fields: [crmLeadId], references: [id], onDelete: Cascade)
+
+  @@index([crmLeadId])
+  @@map("crm_lead_deals")
+}
+
+model CrmLeadInteraction {
+  id              String   @id @default(cuid())
+  crmLeadId       String   @map("crm_lead_id")
+  type            String   @default("nota")
+  title           String
+  description     String?
+  authorName      String?  @map("author_name")
+  createdByUserId String?  @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  crmLead   CrmLead @relation(fields: [crmLeadId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("CrmLeadInteractionAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([crmLeadId])
+  @@index([createdAt])
+  @@map("crm_lead_interactions")
+}
+
+model CrmLeadTask {
+  id              String   @id @default(cuid())
+  crmLeadId       String   @map("crm_lead_id")
+  title           String
+  kind            String   @default("reuniao")
+  scheduledAt     DateTime @map("scheduled_at")
+  done            Boolean  @default(false)
+  description     String?
+  local           String?
+  reminderMinutes Int?     @map("reminder_minutes")
+  negocioRef      String?  @map("negocio_ref")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  crmLead CrmLead @relation(fields: [crmLeadId], references: [id], onDelete: Cascade)
+
+  @@index([crmLeadId])
+  @@index([scheduledAt])
+  @@map("crm_lead_tasks")
+}
+
 // Eventos de analytics (navegação, tempo em página, cliques, scroll, buscas).
 model SiteAnalyticsEvent {
   id        String   @id @default(cuid())
@@ -342,18 +517,21 @@ model SiteAnalyticsEvent {
 // ----------------------------------------------------------------------
 
 model Visitor {
-  id          String   @id @default(cuid())
-  fingerprint String   @unique
-  ip          String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(cuid())
+  /// ID estável no cliente (cookie + localStorage) para rastrear o funil mesmo se o fingerprint de sessão mudar.
+  clientVisitorId  String?  @unique @map("client_visitor_id")
+  fingerprint      String   @unique
+  ip               String?
+  userAgent        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   sessions TrackingSession[]
   events   TrackingEvent[]
   lead     Lead?
 
   @@index([fingerprint])
+  @@index([clientVisitorId])
   @@index([updatedAt])
 }
 
