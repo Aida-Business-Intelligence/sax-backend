@@ -1,10 +1,10 @@
-import path from 'path';
-import fs from 'fs';
 import { randomUUID } from 'crypto';
 import type { Router } from 'express';
 import type { Request } from 'express';
 import multer from 'multer';
 import type { Prisma } from '@prisma/client';
+import { uploadPublic, keys } from '../lib/storage.js';
+import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
 import { generateUniqueProtocol } from '../lib/helpdesk-protocol.js';
 import { getScreenShareState, postScreenShareSignal } from '../lib/helpdesk-screen-share.js';
 import { prisma } from '../lib/prisma.js';
@@ -12,29 +12,9 @@ import type { OwnerRequest } from '../middleware/ownerAuth.js';
 
 const PRIORITIES = new Set(['LOW', 'NORMAL', 'HIGH', 'URGENT']);
 
-const HELP_DESK_UPLOAD_ROOT = path.join(process.cwd(), 'uploads', 'helpdesk');
-
-function ensureHelpdeskTicketDir(ticketId: string) {
-  const dir = path.join(HELP_DESK_UPLOAD_ROOT, ticketId);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-
 const helpdeskOwnerImageUpload = multer({
-  storage: multer.diskStorage({
-    destination: (req, _file, cb) => {
-      const ticketId = (req.params as { id: string }).id;
-      cb(null, ensureHelpdeskTicketDir(ticketId));
-    },
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname || '').toLowerCase();
-      const safe = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext) ? ext : '.png';
-      cb(null, `${Date.now()}-${randomUUID()}${safe}`);
-    },
-  }),
-  limits: { fileSize: 8 * 1024 * 1024 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: SIZE.HELPDESK_IMAGE },
   fileFilter: (_req, file, cb) => {
     const ok = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.mimetype);
     if (!ok) return cb(new Error('Apenas imagens (JPEG, PNG, GIF ou WebP)'));
@@ -322,7 +302,17 @@ export function attachHelpdeskOwnerRoutes(router: Router) {
           return;
         }
 
-        const imageUrl = uploaded ? `/uploads/helpdesk/${id}/${uploaded.filename}` : null;
+        let imageUrl: string | null = null;
+        if (uploaded) {
+          const v = validateImage(uploaded.buffer, SIZE.HELPDESK_IMAGE);
+          if (!v.ok) {
+            res.status(422).json({ message: v.error });
+            return;
+          }
+          const ext = safeExtFromMime(v.mime!);
+          const key = keys.helpdeskImage(id, `${Date.now()}-${randomUUID()}${ext}`);
+          imageUrl = await uploadPublic(key, uploaded.buffer, v.mime!);
+        }
 
         const now = new Date();
         const msg = await prisma.$transaction(async (tx) => {

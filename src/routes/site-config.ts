@@ -1,32 +1,19 @@
-import path from 'path';
-import fs from 'fs';
+import multer from 'multer';
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
+import { uploadPublic, deleteObject, keyFromCdnUrl, keys } from '../lib/storage.js';
+import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
 
 const router = Router();
-const UPLOAD_SITE_DIR = path.join(process.cwd(), 'uploads', 'site');
 
-/** Divide um Buffer pelo delimitador (Buffer não tem .split() nativo). */
-function bufferSplit(buf: Buffer, delim: Buffer): Buffer[] {
-  const result: Buffer[] = [];
-  let start = 0;
-  while (start < buf.length) {
-    const idx = buf.indexOf(delim, start);
-    if (idx === -1) {
-      if (start < buf.length) result.push(buf.subarray(start));
-      break;
-    }
-    if (idx > start) result.push(buf.subarray(start, idx));
-    start = idx + delim.length;
-  }
-  return result.filter((p) => p.length > 0 && !p.toString().endsWith('--\r\n'));
-}
-
-function ensureUploadDir() {
-  if (!fs.existsSync(UPLOAD_SITE_DIR)) {
-    fs.mkdirSync(UPLOAD_SITE_DIR, { recursive: true });
-  }
-}
+const siteAssetUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: SIZE.SITE_ASSET },
+  fileFilter: (_req, file, cb) => {
+    // Accept any image MIME; magic bytes are verified after upload
+    cb(null, file.mimetype.startsWith('image/'));
+  },
+});
 
 function parseJsonArray(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -494,211 +481,80 @@ router.put('/', async (req, res, next) => {
 
 /**
  * POST /api/site-config/upload-logo - Upload da logo do site (multipart/form-data, campo "file").
- * Salva em uploads/site/ e retorna a URL para gravar em site-config (logoUrl).
+ * Faz upload para DO Spaces e retorna a URL CDN para gravar em site-config (logoUrl).
  */
-router.post('/upload-logo', (req: Request, res: Response) => {
-  if (!req.is('multipart/form-data')) {
-    res.status(400).json({ success: false, message: 'Content-Type deve ser multipart/form-data' });
-    return;
-  }
-
-  const chunks: Buffer[] = [];
-  req.on('data', (chunk: Buffer) => chunks.push(chunk));
-  req.on('end', () => {
-    const buffer = Buffer.concat(chunks);
-    const contentType = req.headers['content-type'] ?? '';
-    const boundaryMatch = contentType.split('boundary=')[1]?.trim().replace(/^["']|["']$/g, '');
-    const boundary = boundaryMatch ?? '';
-
-    if (!boundary) {
-      res.status(400).json({ success: false, message: 'Boundary não encontrado' });
-      return;
-    }
-
-    const boundaryBuf = Buffer.from(`--${boundary}`);
-    const parts = bufferSplit(buffer, boundaryBuf);
-    let fileBuffer: Buffer | null = null;
-    let filename = '';
-
-    for (const part of parts) {
-      const headerEnd = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      const headers = part.subarray(0, headerEnd).toString();
-      const body = part.subarray(headerEnd + 4);
-      const nameMatch = headers.match(/name="([^"]+)"/);
-      const fileMatch = headers.match(/filename="([^"]+)"/);
-      if (nameMatch && nameMatch[1] === 'file' && fileMatch) {
-        filename = fileMatch[1];
-        fileBuffer = body.subarray(0, body.length - 2);
-        break;
-      }
-    }
-
-    if (!fileBuffer || !filename) {
+router.post('/upload-logo', siteAssetUpload.single('file'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
       res.status(400).json({ success: false, message: 'Nenhum arquivo enviado no campo "file"' });
       return;
     }
-
-    const ext = path.extname(filename) || '.png';
-    const allowed = ['.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp'];
-    if (!allowed.includes(ext.toLowerCase())) {
-      res.status(400).json({ success: false, message: 'Tipo de arquivo não permitido. Use: png, jpg, jpeg, svg, gif ou webp.' });
+    const validation = validateImage(req.file.buffer, SIZE.SITE_ASSET);
+    if (!validation.ok) {
+      res.status(400).json({ success: false, message: validation.error });
       return;
     }
-
-    ensureUploadDir();
-    const safeName = `logo${ext}`;
-    const filePath = path.join(UPLOAD_SITE_DIR, safeName);
-    fs.writeFileSync(filePath, fileBuffer);
-
-    const logoUrl = `/uploads/site/${safeName}`;
+    // Delete old logo from Space if one exists
+    const current = hasSiteConfig() ? await prisma.siteConfig.findFirst({ select: { logoUrl: true } }) : null;
+    await deleteObject(keyFromCdnUrl(current?.logoUrl));
+    const ext = safeExtFromMime(validation.mime);
+    const objectKey = keys.siteImage('logo', `${Date.now()}${ext}`);
+    const logoUrl = await uploadPublic(objectKey, req.file.buffer, validation.mime);
     res.json({ success: true, logoUrl, message: 'Logo enviada com sucesso' });
-  });
-  req.on('error', () => {
-    res.status(500).json({ success: false, message: 'Erro ao receber o arquivo' });
-  });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 /**
  * POST /api/site-config/upload-favicon - Upload do favicon do site (multipart/form-data, campo "file").
- * Salva em uploads/site/ e retorna a URL para gravar em site-config (faviconUrl).
+ * Faz upload para DO Spaces e retorna a URL CDN para gravar em site-config (faviconUrl).
  */
-router.post('/upload-favicon', (req: Request, res: Response) => {
-  if (!req.is('multipart/form-data')) {
-    res.status(400).json({ success: false, message: 'Content-Type deve ser multipart/form-data' });
-    return;
-  }
-
-  const chunks: Buffer[] = [];
-  req.on('data', (chunk: Buffer) => chunks.push(chunk));
-  req.on('end', () => {
-    const buffer = Buffer.concat(chunks);
-    const contentType = req.headers['content-type'] ?? '';
-    const boundaryMatch = contentType.split('boundary=')[1]?.trim().replace(/^["']|["']$/g, '');
-    const boundary = boundaryMatch ?? '';
-
-    if (!boundary) {
-      res.status(400).json({ success: false, message: 'Boundary não encontrado' });
-      return;
-    }
-
-    const boundaryBuf = Buffer.from(`--${boundary}`);
-    const parts = bufferSplit(buffer, boundaryBuf);
-    let fileBuffer: Buffer | null = null;
-    let filename = '';
-
-    for (const part of parts) {
-      const headerEnd = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      const headers = part.subarray(0, headerEnd).toString();
-      const body = part.subarray(headerEnd + 4);
-      const nameMatch = headers.match(/name="([^"]+)"/);
-      const fileMatch = headers.match(/filename="([^"]+)"/);
-      if (nameMatch && nameMatch[1] === 'file' && fileMatch) {
-        filename = fileMatch[1];
-        fileBuffer = body.subarray(0, body.length - 2);
-        break;
-      }
-    }
-
-    if (!fileBuffer || !filename) {
+router.post('/upload-favicon', siteAssetUpload.single('file'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
       res.status(400).json({ success: false, message: 'Nenhum arquivo enviado no campo "file"' });
       return;
     }
-
-    const ext = path.extname(filename) || '.ico';
-    const allowed = ['.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp', '.ico'];
-    if (!allowed.includes(ext.toLowerCase())) {
-      res.status(400).json({ success: false, message: 'Tipo de arquivo não permitido. Use: png, jpg, jpeg, svg, gif, webp ou ico.' });
+    // ICO files are not raster images so we allow them as a special case
+    const validation = validateImage(req.file.buffer, SIZE.SITE_ASSET, /* allowIco */ true);
+    if (!validation.ok) {
+      res.status(400).json({ success: false, message: validation.error });
       return;
     }
-
-    ensureUploadDir();
-    const safeName = `favicon${ext}`;
-    const filePath = path.join(UPLOAD_SITE_DIR, safeName);
-    fs.writeFileSync(filePath, fileBuffer);
-
-    const faviconUrl = `/uploads/site/${safeName}`;
+    const current = hasSiteConfig() ? await prisma.siteConfig.findFirst({ select: { faviconUrl: true } }) : null;
+    await deleteObject(keyFromCdnUrl(current?.faviconUrl));
+    const ext = safeExtFromMime(validation.mime);
+    const objectKey = keys.siteImage('favicon', `${Date.now()}${ext}`);
+    const faviconUrl = await uploadPublic(objectKey, req.file.buffer, validation.mime);
     res.json({ success: true, faviconUrl, message: 'Favicon enviado com sucesso' });
-  });
-  req.on('error', () => {
-    res.status(500).json({ success: false, message: 'Erro ao receber o arquivo' });
-  });
-});
-
-const UPLOAD_PARTNERS_DIR = path.join(process.cwd(), 'uploads', 'site', 'partners');
-
-function ensurePartnersDir() {
-  if (!fs.existsSync(UPLOAD_PARTNERS_DIR)) {
-    fs.mkdirSync(UPLOAD_PARTNERS_DIR, { recursive: true });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
   }
-}
+});
 
 /**
  * POST /api/site-config/upload-partner-logo - Upload de logo de parceiro (multipart, campo "file").
- * Salva em uploads/site/partners/ com nome único e retorna { url }.
+ * Faz upload para DO Spaces e retorna { url }.
  */
-router.post('/upload-partner-logo', (req: Request, res: Response) => {
-  if (!req.is('multipart/form-data')) {
-    res.status(400).json({ success: false, message: 'Content-Type deve ser multipart/form-data' });
-    return;
-  }
-
-  const chunks: Buffer[] = [];
-  req.on('data', (chunk: Buffer) => chunks.push(chunk));
-  req.on('end', () => {
-    const buffer = Buffer.concat(chunks);
-    const contentType = req.headers['content-type'] ?? '';
-    const boundaryMatch = contentType.split('boundary=')[1]?.trim().replace(/^["']|["']$/g, '');
-    const boundary = boundaryMatch ?? '';
-
-    if (!boundary) {
-      res.status(400).json({ success: false, message: 'Boundary não encontrado' });
-      return;
-    }
-
-    const boundaryBuf = Buffer.from(`--${boundary}`);
-    const parts = bufferSplit(buffer, boundaryBuf);
-    let fileBuffer: Buffer | null = null;
-    let filename = '';
-
-    for (const part of parts) {
-      const headerEnd = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      const headers = part.subarray(0, headerEnd).toString();
-      const body = part.subarray(headerEnd + 4);
-      const nameMatch = headers.match(/name="([^"]+)"/);
-      const fileMatch = headers.match(/filename="([^"]+)"/);
-      if (nameMatch && nameMatch[1] === 'file' && fileMatch) {
-        filename = fileMatch[1];
-        fileBuffer = body.subarray(0, body.length - 2);
-        break;
-      }
-    }
-
-    if (!fileBuffer || !filename) {
+router.post('/upload-partner-logo', siteAssetUpload.single('file'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
       res.status(400).json({ success: false, message: 'Nenhum arquivo enviado no campo "file"' });
       return;
     }
-
-    const ext = path.extname(filename) || '.png';
-    const allowed = ['.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp'];
-    if (!allowed.includes(ext.toLowerCase())) {
-      res.status(400).json({ success: false, message: 'Tipo não permitido. Use: png, jpg, jpeg, svg, gif ou webp.' });
+    const validation = validateImage(req.file.buffer, SIZE.SITE_ASSET);
+    if (!validation.ok) {
+      res.status(400).json({ success: false, message: validation.error });
       return;
     }
-
-    ensurePartnersDir();
-    const uniqueName = `partner-${Date.now()}${ext}`;
-    const filePath = path.join(UPLOAD_PARTNERS_DIR, uniqueName);
-    fs.writeFileSync(filePath, fileBuffer);
-
-    const url = `/uploads/site/partners/${uniqueName}`;
+    const ext = safeExtFromMime(validation.mime);
+    const objectKey = keys.sitePartner(`${Date.now()}${ext}`);
+    const url = await uploadPublic(objectKey, req.file.buffer, validation.mime);
     res.json({ success: true, url, message: 'Logo do parceiro enviada' });
-  });
-  req.on('error', () => {
-    res.status(500).json({ success: false, message: 'Erro ao receber o arquivo' });
-  });
+  } catch (e) {
+    res.status(500).json({ success: false, message: (e as Error).message });
+  }
 });
 
 export default router;
