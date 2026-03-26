@@ -137,6 +137,7 @@ function emptyResponse() {
     exclusiveProjectsContent: null as Record<string, unknown> | null,
     imoveisContent: null as Record<string, unknown> | null,
     proprietariosContent: null as Record<string, unknown> | null,
+    huntModeEnabled: false,
   };
 }
 
@@ -212,6 +213,11 @@ router.get('/', async (_req, res, next) => {
     }
     if (proprietariosContentRaw === undefined) proprietariosContentRaw = null;
 
+    const huntModeEnabled =
+      typeof (row as { huntModeEnabled?: boolean })?.huntModeEnabled === 'boolean'
+        ? (row as { huntModeEnabled: boolean }).huntModeEnabled
+        : false;
+
     res.json({
       featuredPropertyIds,
       logoUrl: row?.logoUrl ?? null,
@@ -225,6 +231,7 @@ router.get('/', async (_req, res, next) => {
       exclusiveProjectsContent: parseExclusiveProjectsContent(exclusiveProjectsRaw),
       imoveisContent: parseImoveisContent(imoveisContentRaw),
       proprietariosContent: parseProprietariosContent(proprietariosContentRaw),
+      huntModeEnabled,
     });
   } catch (e) {
     console.error('[site-config GET]', e);
@@ -258,7 +265,10 @@ router.put('/', async (req, res, next) => {
       exclusiveProjectsContent?: Record<string, unknown> | null;
       imoveisContent?: Record<string, unknown> | null;
       proprietariosContent?: Record<string, unknown> | null;
+      huntModeEnabled?: boolean;
     };
+    const huntModeEnabled =
+      body.huntModeEnabled !== undefined ? Boolean(body.huntModeEnabled) : undefined;
     const featuredPropertyIdsJson =
       body.featuredPropertyIds !== undefined
         ? (Array.isArray(body.featuredPropertyIds)
@@ -351,6 +361,7 @@ router.put('/', async (req, res, next) => {
         faviconUrl: faviconUrl ?? null,
         menuItems: menuItems ?? null,
         heroContent: heroContentJson ?? null,
+        ...(huntModeEnabled !== undefined ? { huntModeEnabled } : { huntModeEnabled: false }),
       };
       row = (await prisma.siteConfig.create({ data: createData as never })) as SiteConfigRow;
       if (partnerLogosJson !== undefined) {
@@ -381,6 +392,7 @@ router.put('/', async (req, res, next) => {
       if (faviconUrl !== undefined) data.faviconUrl = faviconUrl;
       if (menuItems !== undefined) data.menuItems = menuItems;
       if (heroContentJson !== undefined) data.heroContent = heroContentJson;
+      if (huntModeEnabled !== undefined) data.huntModeEnabled = huntModeEnabled;
       row = (await prisma.siteConfig.update({
         where: { id: row.id },
         data: data as never,
@@ -459,6 +471,13 @@ router.put('/', async (req, res, next) => {
     }
     if (outProprietariosRaw === undefined) outProprietariosRaw = null;
 
+    const outHunt =
+      typeof (row as { huntModeEnabled?: boolean }).huntModeEnabled === 'boolean'
+        ? (row as { huntModeEnabled: boolean }).huntModeEnabled
+        : huntModeEnabled !== undefined
+          ? huntModeEnabled
+          : false;
+
     res.json({
       featuredPropertyIds: outFeatured,
       logoUrl: row.logoUrl ?? null,
@@ -472,6 +491,7 @@ router.put('/', async (req, res, next) => {
       exclusiveProjectsContent: parseExclusiveProjectsContent(outExclusiveRaw),
       imoveisContent: parseImoveisContent(outImoveisRaw),
       proprietariosContent: parseProprietariosContent(outProprietariosRaw),
+      huntModeEnabled: outHunt,
     });
   } catch (e) {
     console.error('[site-config PUT]', e);

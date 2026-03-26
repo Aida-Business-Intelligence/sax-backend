@@ -9,7 +9,37 @@ import { config } from '../config.js';
 const router = Router();
 router.use(authMiddleware);
 
-const ENCRYPT_SECRET = process.env.JWT_SECRET || config.jwtSecret || 'dev-secret-change-in-production';
+/** Senha usada em encrypt/decrypt das credenciais IMAP. Pode ser fixa (MAIL_CREDENTIALS_SECRET) para não invalidar contas ao rotacionar JWT. */
+const MAIL_CREDENTIALS_SECRET =
+  process.env.MAIL_CREDENTIALS_SECRET || process.env.JWT_SECRET || config.jwtSecret || 'dev-secret-change-in-production';
+
+const GMAIL_APP_PASSWORDS_URL = 'https://myaccount.google.com/apppasswords';
+
+/** Mensagem legível quando o IMAP devolve AUTHENTICATIONFAILED (ex.: Gmail com senha da conta em vez de senha de app). */
+function formatImapLoginError(error: unknown, imapHost: string, emailAddr: string): string {
+  const e = error as Error & {
+    responseText?: string;
+    authenticationFailed?: boolean;
+    response?: string;
+  };
+  const raw = (e.responseText || (e instanceof Error ? e.message : String(error))).trim();
+  const combined = `${String(e.response || '')} ${raw}`.toLowerCase();
+  const authFailed =
+    e.authenticationFailed === true ||
+    /AUTHENTICATIONFAILED|invalid credentials|authentication failed/i.test(combined);
+
+  if (authFailed) {
+    const isGmail =
+      /imap\.gmail\.com/i.test(imapHost) ||
+      /@gmail\.com$/i.test(emailAddr) ||
+      /@googlemail\.com$/i.test(emailAddr);
+    if (isGmail) {
+      return `Gmail recusou a senha no IMAP. Com 2FA ativo, use uma senha de app (não a senha da conta Google): ${GMAIL_APP_PASSWORDS_URL} — use as 16 letras sem espaços; em Gmail → Configurações → Ver todas → Encaminhamento e POP/IMAP → ative IMAP.`;
+    }
+    return 'Credenciais recusadas pelo servidor de e-mail. Confira usuário e senha; com 2FA use senha de app do provedor.';
+  }
+  return raw || 'Não foi possível conectar ao servidor de e-mail. Verifique usuário, senha e IMAP.';
+}
 
 // ----------------------------------------------------------------------
 // Contas: listar, criar, remover
@@ -88,16 +118,15 @@ router.post('/accounts', async (req: Request, res: Response) => {
       await testClient.connect();
       await testClient.logout();
     } catch (imapErr: unknown) {
-      const err = imapErr as Error & { responseText?: string };
-      const imapMessage = err?.responseText || (err instanceof Error ? err.message : String(imapErr));
       console.error('mail accounts create IMAP test', imapErr);
+      const message = formatImapLoginError(imapErr, host, email);
       res.status(422).json({
         success: false,
-        message: imapMessage || 'Não foi possível conectar ao servidor de e-mail. Verifique usuário, senha e IMAP.',
+        message,
       });
       return;
     }
-    const encrypted = encrypt(password, ENCRYPT_SECRET);
+    const encrypted = encrypt(password, MAIL_CREDENTIALS_SECRET);
     const account = await prisma.emailAccount.create({
       data: {
         userId,
@@ -133,7 +162,7 @@ router.post('/accounts', async (req: Request, res: Response) => {
     if (isPrisma) {
       userMessage = 'Tabela de e-mail não configurada. Execute a migração do banco (prisma migrate).';
     } else if (isCrypto) {
-      userMessage = 'Erro ao salvar credenciais. Verifique JWT_SECRET no servidor.';
+      userMessage = 'Erro ao salvar credenciais. Verifique MAIL_CREDENTIALS_SECRET ou JWT_SECRET no servidor.';
     }
     res.status(500).json({ success: false, message: userMessage });
   }
@@ -164,13 +193,26 @@ router.delete('/accounts/:id', async (req: Request, res: Response) => {
 // Helpers IMAP: obter cliente e credenciais para uma conta
 // ----------------------------------------------------------------------
 
-async function getAccountAndPassword(accountId: string, userId: string) {
+type AccountPwdRow =
+  | { ok: true; account: NonNullable<Awaited<ReturnType<typeof prisma.emailAccount.findFirst>>>; password: string }
+  | { ok: false; error: string };
+
+async function getAccountAndPassword(accountId: string, userId: string): Promise<AccountPwdRow | null> {
   const account = await prisma.emailAccount.findFirst({
     where: { id: accountId, userId },
   });
   if (!account) return null;
-  const password = decrypt(account.credentials, ENCRYPT_SECRET);
-  return { account, password };
+  try {
+    const password = decrypt(account.credentials, MAIL_CREDENTIALS_SECRET);
+    return { ok: true, account, password };
+  } catch (e) {
+    console.error('mail: falha ao descriptografar credenciais (chave mudou?)', e);
+    return {
+      ok: false,
+      error:
+        'Não foi possível ler a senha salva. Remova a conta e conecte de novo. Se JWT_SECRET ou MAIL_CREDENTIALS_SECRET mudou no servidor, todas as contas precisam ser reconectadas.',
+    };
+  }
 }
 
 // ----------------------------------------------------------------------
@@ -197,6 +239,10 @@ router.get('/labels', async (req: Request, res: Response) => {
         res.json({ labels: [] });
         return;
       }
+      if (!row.ok) {
+        res.status(200).json({ labels: [], error: row.error });
+        return;
+      }
       account = row.account;
       password = row.password;
     } else {
@@ -211,6 +257,10 @@ router.get('/labels', async (req: Request, res: Response) => {
       const row = await getAccountAndPassword(first.id, userId);
       if (!row) {
         res.json({ labels: [] });
+        return;
+      }
+      if (!row.ok) {
+        res.status(200).json({ labels: [], error: row.error });
         return;
       }
       account = row.account;
@@ -291,6 +341,10 @@ router.get('/list', async (req: Request, res: Response) => {
         res.json({ mails: [] });
         return;
       }
+      if (!row.ok) {
+        res.status(200).json({ mails: [], error: row.error });
+        return;
+      }
       account = row.account;
       password = row.password;
     } else {
@@ -305,6 +359,10 @@ router.get('/list', async (req: Request, res: Response) => {
       const row = await getAccountAndPassword(first.id, userId);
       if (!row) {
         res.json({ mails: [] });
+        return;
+      }
+      if (!row.ok) {
+        res.status(200).json({ mails: [], error: row.error });
         return;
       }
       account = row.account;
@@ -396,6 +454,10 @@ router.get('/details', async (req: Request, res: Response) => {
         res.json({ mail: null });
         return;
       }
+      if (!row.ok) {
+        res.json({ mail: null, error: row.error });
+        return;
+      }
       account = row.account;
       password = row.password;
     } else {
@@ -410,6 +472,10 @@ router.get('/details', async (req: Request, res: Response) => {
       const row = await getAccountAndPassword(first.id, userId);
       if (!row) {
         res.json({ mail: null });
+        return;
+      }
+      if (!row.ok) {
+        res.json({ mail: null, error: row.error });
         return;
       }
       account = row.account;

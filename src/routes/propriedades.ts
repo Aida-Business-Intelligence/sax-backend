@@ -10,7 +10,13 @@ import {
 } from '../lib/property-ref.js';
 import { buildGeoAddressKey, geocodeBrazilAddress } from '../lib/geocode.js';
 import { buildPropertyListWhere } from '../lib/property-list-filters.js';
-import { uploadPublic, deleteObject, keyFromCdnUrl, keys } from '../lib/storage.js';
+import {
+  uploadPublic,
+  deleteObject,
+  keyFromCdnUrl,
+  keys,
+  resolvePropertyMediaPublicUrl,
+} from '../lib/storage.js';
 import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
 
 const router = Router();
@@ -207,6 +213,13 @@ router.post('/list', async (req, res, next) => {
         orderBy: [{ ref: 'asc' }, { createdAt: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
+        include: {
+          media: {
+            orderBy: { sortOrder: 'asc' },
+            take: 1,
+            select: { url: true },
+          },
+        },
       }),
       prisma.property.count({ where }),
     ]);
@@ -225,6 +238,7 @@ router.post('/list', async (req, res, next) => {
       data: list.map((p) => ({
         ...formatPropriedade(p),
         proprietario_nome: p.proprietarioId ? ownerNomeById.get(p.proprietarioId) ?? null : null,
+        foto_url: p.media?.[0]?.url ? resolvePropertyMediaPublicUrl(p.media[0].url) : null,
       })),
       total,
     });
@@ -261,8 +275,12 @@ async function getOne(req: import('express').Request, res: import('express').Res
     }
     const formatted = formatPropriedade(p) as Record<string, unknown>;
     formatted.section_ids = p.sections?.map((s) => s.sectionId) ?? [];
-    formatted.media = (p.media ?? []).map((m) => ({ id: m.id, url: m.url, sortOrder: m.sortOrder }));
-    formatted.anexos = (p.media ?? []).map((m) => m.url);
+    formatted.media = (p.media ?? []).map((m) => ({
+      id: m.id,
+      url: resolvePropertyMediaPublicUrl(m.url),
+      sortOrder: m.sortOrder,
+    }));
+    formatted.anexos = (p.media ?? []).map((m) => resolvePropertyMediaPublicUrl(m.url));
     formatted.imagem_capa_index = 0;
     res.json(formatted);
   } catch (e) {
@@ -659,7 +677,12 @@ router.put('/update/:id', async (req, res, next) => {
           const sortOrder = typeof item === 'object' && item != null && typeof (item as { sortOrder?: number }).sortOrder === 'number'
             ? (item as { sortOrder: number }).sortOrder
             : i;
-          return { propertyId: id, url: String(url).trim(), type: 'image', sortOrder };
+          return {
+            propertyId: id,
+            url: resolvePropertyMediaPublicUrl(String(url).trim()),
+            type: 'image',
+            sortOrder,
+          };
         }).filter((row) => row.url.length > 0);
         if (toInsert.length > 0) {
           await prisma.propertyMedia.createMany({ data: toInsert });
@@ -670,8 +693,12 @@ router.put('/update/:id', async (req, res, next) => {
     const updated = await prisma.property.findUnique({ where: { id }, include: { media: { orderBy: { sortOrder: 'asc' } } } });
     const out = updated ? formatPropriedade(updated) as Record<string, unknown> : {};
     if (updated?.media) {
-      (out as Record<string, unknown>).media = updated.media.map((m) => ({ id: m.id, url: m.url, sortOrder: m.sortOrder }));
-      (out as Record<string, unknown>).anexos = updated.media.map((m) => m.url);
+      (out as Record<string, unknown>).media = updated.media.map((m) => ({
+        id: m.id,
+        url: resolvePropertyMediaPublicUrl(m.url),
+        sortOrder: m.sortOrder,
+      }));
+      (out as Record<string, unknown>).anexos = updated.media.map((m) => resolvePropertyMediaPublicUrl(m.url));
     }
     res.json(out);
   } catch (e) {

@@ -1,41 +1,171 @@
 import { Router, Request } from 'express';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { enqueueFromEvent } from '../lib/automations.js';
+import { syncCrmLeadFromTracking } from '../lib/crm-lead-sync.js';
+import { calculateVisitorIntentScore, getLeadTemperature } from '../lib/tracking-score.js';
 
 const router = Router();
 
-/** Pontos por tipo de evento (intenção de compra) */
-const SCORE_RULES: Record<string, number> = {
-  PAGE_VIEW: 1,
-  VIEW_PROPERTY: 5,
-  CLICK_WHATSAPP: 20,
-  RETURN_VISIT: 10,
-};
-
-/**
- * Calcula o score do visitante somando os pontos de todos os eventos.
- */
-async function calculateScore(visitorId: string): Promise<number> {
-  const eventModel = (prisma as any).trackingEvent;
-  if (typeof eventModel?.findMany !== 'function') return 0;
-  const events = await eventModel.findMany({
-    where: { visitorId },
-    select: { type: true },
-  });
-  let total = 0;
-  for (const e of events) {
-    const points = SCORE_RULES[e.type];
-    if (typeof points === 'number') total += points;
-  }
-  return total;
+function normalizeClientVisitorId(raw: unknown): string | null {
+  if (raw == null || typeof raw !== 'string') return null;
+  const s = raw.trim().slice(0, 128);
+  return s.length ? s : null;
 }
 
-/** Temperatura do lead: score > 50 → hot, score > 20 → warm, senão cold */
-function getTemperature(score: number): 'cold' | 'warm' | 'hot' {
-  if (score > 50) return 'hot';
-  if (score > 20) return 'warm';
-  return 'cold';
+function normalizeFingerprint(raw: unknown): string | null {
+  if (raw == null || typeof raw !== 'string') return null;
+  const s = raw.trim().slice(0, 256);
+  return s.length ? s : null;
+}
+
+/**
+ * Move eventos/sessões/lead do visitante duplicado para o canônico e remove o duplicado.
+ */
+async function mergeVisitorsKeepCanonical(
+  tx: Prisma.TransactionClient,
+  canonicalId: string,
+  duplicateId: string,
+): Promise<void> {
+  if (canonicalId === duplicateId) return;
+
+  await tx.trackingEvent.updateMany({
+    where: { visitorId: duplicateId },
+    data: { visitorId: canonicalId },
+  });
+
+  await tx.trackingSession.updateMany({
+    where: { visitorId: duplicateId },
+    data: { visitorId: canonicalId },
+  });
+
+  const dup = await tx.visitor.findUnique({
+    where: { id: duplicateId },
+    include: { lead: true },
+  });
+  const can = await tx.visitor.findUnique({
+    where: { id: canonicalId },
+    include: { lead: true },
+  });
+
+  if (!dup) return;
+
+  if (dup.lead && !can?.lead) {
+    await tx.lead.update({
+      where: { id: dup.lead.id },
+      data: { visitorId: canonicalId },
+    });
+  } else if (dup.lead && can?.lead) {
+    await tx.lead.update({
+      where: { id: can.lead.id },
+      data: {
+        name: can.lead.name || dup.lead.name,
+        email: can.lead.email || dup.lead.email,
+        phone: can.lead.phone || dup.lead.phone,
+        score: Math.max(can.lead.score ?? 0, dup.lead.score ?? 0),
+      },
+    });
+    await tx.lead.delete({ where: { id: dup.lead.id } });
+  }
+
+  await tx.visitor.delete({ where: { id: duplicateId } });
+}
+
+/** Une registros quando fingerprint e clientVisitorId apontavam para visitantes diferentes. */
+async function stabilizeVisitorRecords(
+  tx: Prisma.TransactionClient,
+  cid: string | null,
+  fp: string | null,
+): Promise<void> {
+  if (!cid && !fp) return;
+  for (let i = 0; i < 8; i++) {
+    let changed = false;
+    const byCid = cid ? await tx.visitor.findUnique({ where: { clientVisitorId: cid } }) : null;
+    const byFp = fp ? await tx.visitor.findUnique({ where: { fingerprint: fp } }) : null;
+
+    if (byCid && byFp && byCid.id !== byFp.id) {
+      await mergeVisitorsKeepCanonical(tx, byCid.id, byFp.id);
+      changed = true;
+    } else if (byCid && fp) {
+      const fpOwner = await tx.visitor.findUnique({ where: { fingerprint: fp } });
+      if (fpOwner && fpOwner.id !== byCid.id) {
+        await mergeVisitorsKeepCanonical(tx, byCid.id, fpOwner.id);
+        changed = true;
+      }
+    } else if (byFp && cid) {
+      const cidOwner = await tx.visitor.findUnique({ where: { clientVisitorId: cid } });
+      if (cidOwner && cidOwner.id !== byFp.id) {
+        await mergeVisitorsKeepCanonical(tx, cidOwner.id, byFp.id);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+}
+
+async function resolveOrCreateVisitor(
+  cid: string | null,
+  fp: string | null,
+  ip: string | null,
+  userAgent: string | null,
+): Promise<{ id: string }> {
+  if (!cid && !fp) {
+    throw new Error('MISSING_IDS');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await stabilizeVisitorRecords(tx, cid, fp);
+
+    let v = cid ? await tx.visitor.findUnique({ where: { clientVisitorId: cid } }) : null;
+    if (!v && fp) {
+      v = await tx.visitor.findUnique({ where: { fingerprint: fp } });
+    }
+
+    const touch: Prisma.VisitorUpdateInput = {
+      updatedAt: new Date(),
+      ...(ip != null && ip.length > 0 ? { ip } : {}),
+      ...(userAgent != null && userAgent.length > 0 ? { userAgent } : {}),
+    };
+
+    if (!v) {
+      return tx.visitor.create({
+        data: {
+          fingerprint: fp ?? `cid:${cid}`,
+          ...(cid ? { clientVisitorId: cid } : {}),
+          ip,
+          userAgent,
+        },
+      });
+    }
+
+    if (cid) {
+      const cidRow = await tx.visitor.findUnique({ where: { clientVisitorId: cid } });
+      if (cidRow && cidRow.id !== v.id) {
+        await mergeVisitorsKeepCanonical(tx, cidRow.id, v.id);
+        v = (await tx.visitor.findUnique({ where: { id: cidRow.id } }))!;
+      }
+    }
+
+    if (fp && v.fingerprint !== fp) {
+      const fpRow = await tx.visitor.findUnique({ where: { fingerprint: fp } });
+      if (fpRow && fpRow.id !== v.id) {
+        await mergeVisitorsKeepCanonical(tx, v.id, fpRow.id);
+        v = (await tx.visitor.findUnique({ where: { id: v.id } }))!;
+      }
+    }
+
+    const data: Prisma.VisitorUpdateInput = {
+      ...touch,
+      ...((cid && (!v.clientVisitorId || v.clientVisitorId === cid)) ? { clientVisitorId: cid } : {}),
+      ...(fp ? { fingerprint: fp } : {}),
+    };
+
+    return tx.visitor.update({
+      where: { id: v.id },
+      data,
+    });
+  });
 }
 
 /**
@@ -46,8 +176,8 @@ async function updateLeadScore(visitorId: string): Promise<void> {
   if (typeof leadModel?.findUnique !== 'function' || typeof leadModel?.update !== 'function') return;
   const lead = await leadModel.findUnique({ where: { visitorId } });
   if (!lead) return;
-  const score = await calculateScore(visitorId);
-  const temperature = getTemperature(score);
+  const score = await calculateVisitorIntentScore(visitorId);
+  const temperature = getLeadTemperature(score);
   const lastActivityAt = new Date();
   await leadModel.update({
     where: { id: lead.id },
@@ -65,47 +195,47 @@ function getClientIp(req: Request): string | null {
 
 /**
  * POST /tracking/event
- * Body: { fingerprint: string, type: string, data: object }
- * - Se visitor não existir → criar (fingerprint, ip, userAgent)
- * - Criar evento (visitorId, type, data)
- * - Atualizar visitor.updatedAt
+ * Body: { clientVisitorId?: string, fingerprint?: string, type: string, data: object }
+ * — Pelo menos um de clientVisitorId ou fingerprint é obrigatório (IP/UA vêm do request).
  */
 router.post('/event', async (req, res, next) => {
   try {
-    const { fingerprint, type, data } = req.body ?? {};
-    if (!fingerprint || typeof fingerprint !== 'string' || !type || typeof type !== 'string') {
+    const { type, data } = req.body ?? {};
+    const cid = normalizeClientVisitorId(req.body?.clientVisitorId);
+    const fp = normalizeFingerprint(req.body?.fingerprint);
+
+    if (!type || typeof type !== 'string') {
       return res.status(400).json({
         success: false,
-        message: 'fingerprint e type são obrigatórios',
+        message: 'type é obrigatório',
+      });
+    }
+    if (!cid && !fp) {
+      return res.status(400).json({
+        success: false,
+        message: 'clientVisitorId ou fingerprint é obrigatório',
       });
     }
 
-    const fp = String(fingerprint).trim().slice(0, 256);
     const eventType = String(type).slice(0, 64);
     const ip = getClientIp(req)?.slice(0, 45) ?? null;
     const userAgent = req.headers['user-agent']?.slice(0, 512) ?? null;
     const payload = data != null && typeof data === 'object' ? data : {};
 
-    const visitorModel = (prisma as any).visitor;
     const eventModel = (prisma as any).trackingEvent;
-
-    if (typeof visitorModel?.upsert !== 'function' || typeof eventModel?.create !== 'function') {
+    if (typeof prisma.visitor !== 'object' || typeof eventModel?.create !== 'function') {
       return res.status(201).json({ success: true });
     }
 
-    const visitor = await visitorModel.upsert({
-      where: { fingerprint: fp },
-      create: {
-        fingerprint: fp,
-        ip,
-        userAgent,
-      },
-      update: {
-        updatedAt: new Date(),
-        ...(ip != null && { ip }),
-        ...(userAgent != null && { userAgent }),
-      },
-    });
+    let visitor: { id: string };
+    try {
+      visitor = await resolveOrCreateVisitor(cid, fp, ip, userAgent);
+    } catch (err) {
+      if (err instanceof Error && err.message === 'MISSING_IDS') {
+        return res.status(400).json({ success: false, message: 'clientVisitorId ou fingerprint é obrigatório' });
+      }
+      throw err;
+    }
 
     await eventModel.create({
       data: {
@@ -127,44 +257,39 @@ router.post('/event', async (req, res, next) => {
 
 /**
  * POST /tracking/lead/identify
- * Body: { fingerprint: string, name?: string, email?: string, phone?: string }
- * - Encontrar visitor pelo fingerprint (ou criar se não existir)
- * - Criar ou atualizar lead (um lead por visitor)
+ * Body: { clientVisitorId?: string, fingerprint?: string, name?, email?, phone? }
  */
 router.post('/lead/identify', async (req, res, next) => {
   try {
-    const { fingerprint, name, email, phone } = req.body ?? {};
-    if (!fingerprint || typeof fingerprint !== 'string') {
+    const { name, email, phone } = req.body ?? {};
+    const cid = normalizeClientVisitorId(req.body?.clientVisitorId);
+    const fp = normalizeFingerprint(req.body?.fingerprint);
+
+    if (!cid && !fp) {
       return res.status(400).json({
         success: false,
-        message: 'fingerprint é obrigatório',
+        message: 'clientVisitorId ou fingerprint é obrigatório',
       });
     }
 
-    const fp = String(fingerprint).trim().slice(0, 256);
-    const visitorModel = (prisma as any).visitor;
     const leadModel = (prisma as any).lead;
 
-    if (typeof visitorModel?.upsert !== 'function' || typeof leadModel?.upsert !== 'function') {
+    if (typeof prisma.visitor !== 'object' || typeof leadModel?.upsert !== 'function') {
       return res.status(201).json({ success: true });
     }
 
     const ip = getClientIp(req)?.slice(0, 45) ?? null;
     const userAgent = req.headers['user-agent']?.slice(0, 512) ?? null;
 
-    const visitor = await visitorModel.upsert({
-      where: { fingerprint: fp },
-      create: {
-        fingerprint: fp,
-        ip,
-        userAgent,
-      },
-      update: {
-        updatedAt: new Date(),
-        ...(ip != null && { ip }),
-        ...(userAgent != null && { userAgent }),
-      },
-    });
+    let visitor: { id: string };
+    try {
+      visitor = await resolveOrCreateVisitor(cid, fp, ip, userAgent);
+    } catch (err) {
+      if (err instanceof Error && err.message === 'MISSING_IDS') {
+        return res.status(400).json({ success: false, message: 'clientVisitorId ou fingerprint é obrigatório' });
+      }
+      throw err;
+    }
 
     const updateData: { name?: string; email?: string; phone?: string } = {};
     if (name != null && typeof name === 'string' && name.trim()) updateData.name = name.trim().slice(0, 256);
@@ -181,6 +306,13 @@ router.post('/lead/identify', async (req, res, next) => {
     });
 
     await updateLeadScore(visitor.id).catch(() => {});
+
+    const source =
+      typeof (req.body as { source?: string })?.source === 'string'
+        ? (req.body as { source: string }).source.trim().slice(0, 64)
+        : undefined;
+    const crmMetadata = (req.body as { crmMetadata?: unknown }).crmMetadata;
+    await syncCrmLeadFromTracking(visitor.id, { source, crmMetadata }).catch(() => {});
 
     return res.status(201).json({ success: true });
   } catch (e) {
@@ -199,11 +331,21 @@ router.get('/visitors', authMiddleware, async (req, res, next) => {
       return res.json([]);
     }
     const limit = Math.min(Number(req.query.limit) || 100, 500);
+    type LeadShape = { id: string; name: string | null; email: string | null; phone: string | null; status: string; score: number; temperature?: string; lastActivityAt?: Date | null; createdAt: Date };
     const visitors = await visitorModel.findMany({
       orderBy: { updatedAt: 'desc' },
       take: limit,
       include: { lead: true },
-    });
+    }) as Array<{
+      id: string;
+      clientVisitorId: string | null;
+      fingerprint: string;
+      ip: string | null;
+      userAgent: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+      lead?: LeadShape | null;
+    }>;
     const visitorIds = visitors.map((v: { id: string }) => v.id);
     const eventCounts = await eventModel.groupBy({
       by: ['visitorId'],
@@ -212,17 +354,9 @@ router.get('/visitors', authMiddleware, async (req, res, next) => {
     });
     const countByVisitor = new Map(eventCounts.map((e: { visitorId: string; _count: { visitorId: number } }) => [e.visitorId, e._count.visitorId]));
 
-    type LeadShape = { id: string; name: string | null; email: string | null; phone: string | null; status: string; score: number; temperature?: string; lastActivityAt?: Date | null; createdAt: Date };
-    const list = visitors.map((v: {
-      id: string;
-      fingerprint: string;
-      ip: string | null;
-      userAgent: string | null;
-      createdAt: Date;
-      updatedAt: Date;
-      lead?: LeadShape | null;
-    }) => ({
+    const list = visitors.map((v) => ({
       id: v.id,
+      clientVisitorId: v.clientVisitorId ?? null,
       fingerprint: v.fingerprint,
       ip: v.ip,
       userAgent: v.userAgent,
@@ -464,17 +598,22 @@ async function getRecommendationsForVisitorId(visitorId: string): Promise<unknow
 }
 
 /**
- * GET /tracking/recommendations — imóveis recomendados (por fingerprint, público).
- * GET /tracking/recommendations/:visitorId — imóveis recomendados (por visitorId, requer auth).
+ * GET /tracking/recommendations — imóveis recomendados (público).
+ * Query: clientVisitorId (preferencial) e/ou fingerprint.
  */
 router.get('/recommendations', async (req, res, next) => {
   try {
-    const fingerprint = typeof req.query.fingerprint === 'string' ? req.query.fingerprint.trim().slice(0, 256) : '';
-    if (!fingerprint) return res.json([]);
+    const cid = normalizeClientVisitorId(req.query.clientVisitorId);
+    const fp = normalizeFingerprint(req.query.fingerprint);
+    if (!cid && !fp) return res.json([]);
 
     const visitorModel = (prisma as any).visitor;
     if (typeof visitorModel?.findUnique !== 'function') return res.json([]);
-    const visitor = await visitorModel.findUnique({ where: { fingerprint } });
+
+    let visitor = cid ? await visitorModel.findUnique({ where: { clientVisitorId: cid } }) : null;
+    if (!visitor && fp) {
+      visitor = await visitorModel.findUnique({ where: { fingerprint: fp } });
+    }
     if (!visitor) return res.json([]);
 
     const formatted = await getRecommendationsForVisitorId(visitor.id);

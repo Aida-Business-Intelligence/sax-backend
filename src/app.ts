@@ -27,6 +27,8 @@ import integrationsRoutes from './routes/integrations.js';
 import mailRoutes from './routes/mail.js';
 import helpdeskRoutes from './routes/helpdesk.js';
 import settingsRoutes from './routes/settings.js';
+import leadsRoutes from './routes/leads.js';
+import hrRoutes from './routes/hr.js';
 
 const app = express();
 
@@ -83,6 +85,17 @@ app.use('/api/integrations', integrationsRoutes);
 app.use('/api/mail', mailRoutes);
 app.use('/api/helpdesk', helpdeskRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/leads', leadsRoutes);
+app.use('/api/hr', hrRoutes);
+
+/** Stub: Meta Lead Ads → crm_leads (configurar verify token + Graph API em fase seguinte). */
+app.post('/api/webhooks/meta-leads', (_req, res) => {
+  res.status(501).json({
+    ok: false,
+    message:
+      'Webhook Meta Lead Ads em preparação. Configure o app no Meta, token de verificação e mapeamento de formulários para crm_leads.',
+  });
+});
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'sax-backend' });

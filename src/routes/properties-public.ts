@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { buildGeoAddressKey, geocodeBrazilAddress } from '../lib/geocode.js';
+import { resolvePropertyMediaPublicUrl } from '../lib/storage.js';
 
 const router = Router();
 
@@ -63,9 +64,18 @@ router.get('/', async (req, res, next) => {
           lng: p.longitude ? Number(p.longitude) : undefined,
         },
         coverImage: p.media?.[0]
-          ? { url: p.media[0].url, alt: p.title, width: 1200, height: 800 }
+          ? {
+              url: resolvePropertyMediaPublicUrl(p.media[0].url),
+              alt: p.title,
+              width: 1200,
+              height: 800,
+            }
           : { url: '', alt: p.title, width: 1200, height: 800 },
-        images: p.media?.map((m) => ({ url: m.url, alt: p.title })) ?? [],
+        images:
+          p.media?.map((m) => ({
+            url: resolvePropertyMediaPublicUrl(m.url),
+            alt: p.title,
+          })) ?? [],
         tagImovel,
         builder: p.builder ?? undefined,
       };
@@ -177,9 +187,18 @@ router.get('/by-slug/:slug', async (req, res, next) => {
         lng: lngOut,
       },
       coverImage: p.media?.[0]
-        ? { url: p.media[0].url, alt: p.title, width: 1200, height: 800 }
+        ? {
+            url: resolvePropertyMediaPublicUrl(p.media[0].url),
+            alt: p.title,
+            width: 1200,
+            height: 800,
+          }
         : { url: '', alt: p.title, width: 1200, height: 800 },
-      images: p.media?.map((m) => ({ url: m.url, alt: p.title })) ?? [],
+      images:
+        p.media?.map((m) => ({
+          url: resolvePropertyMediaPublicUrl(m.url),
+          alt: p.title,
+        })) ?? [],
       comodidades: parseJsonArray(p.comodidades),
       builder: p.builder ?? undefined,
       mobiliado: p.mobiliado ?? false,
