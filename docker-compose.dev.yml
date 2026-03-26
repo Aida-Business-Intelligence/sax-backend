@@ -16,6 +16,13 @@ services:
       DROPBOX_CLIENT_ID: ${DROPBOX_CLIENT_ID:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MAPBOX_TOKEN: ${MAPBOX_TOKEN:-}
+      DO_SPACES_ENDPOINT: ${DO_SPACES_ENDPOINT:-https://sfo3.digitaloceanspaces.com}
+      DO_SPACES_REGION: ${DO_SPACES_REGION:-sfo3}
+      DO_SPACES_KEY: ${DO_SPACES_KEY}
+      DO_SPACES_SECRET: ${DO_SPACES_SECRET}
+      DO_SPACES_BUCKET: ${DO_SPACES_BUCKET:-arvis}
+      DO_SPACES_PREFIX: ${DO_SPACES_PREFIX:-sax-dev}
     volumes:
       - uploads-dev:/app/uploads
     depends_on:
