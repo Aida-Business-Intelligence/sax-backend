@@ -147,6 +147,53 @@ router.post('/employees/list/', async (req: Request, res: Response, next) => {
 });
 
 /**
+ * POST /api/hr/employees/for-lead-assign/
+ * Colaboradores cadastrados em RH como corretor: `is_partner_broker` ou vínculo "Apenas comissão (parceiro/corretor)",
+ * com usuário PDV vinculado e ativo — para o modal "Atribuir lead" no CRM.
+ */
+router.post('/employees/for-lead-assign/', async (req: Request, res: Response, next) => {
+  try {
+    const user = (req as Authed).user;
+    const body = req.body as { warehouse_id?: string };
+    const wh = body.warehouse_id || user.warehouseId || undefined;
+
+    const rows = await getHrEmployeeDelegate().findMany({
+      where: {
+        ...warehouseScope(wh),
+        status: 'active',
+        userId: { not: null },
+        OR: [{ isPartnerBroker: true }, { employmentType: 'commission_only' }],
+      },
+      include: {
+        user: { select: { id: true, name: true, email: true, active: true } },
+      },
+      orderBy: { fullName: 'asc' },
+      take: 200,
+    });
+
+    const data = rows
+      .filter((e) => e.user?.active)
+      .map((e) => {
+        const u = e.user!;
+        const label = (e.fullName || u.name || u.email || '').trim() || u.id;
+        return {
+          user_id: u.id,
+          id: u.id,
+          staffid: u.id,
+          name: label,
+          firstname: label.split(/\s+/)[0] || label,
+          lastname: label.split(/\s+/).slice(1).join(' ') || '',
+          email: u.email,
+        };
+      });
+
+    res.json({ status: true, data, total: data.length });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
  * GET /api/hr/employees/get/:id/
  */
 router.get('/employees/get/:id/', async (req: Request, res: Response, next) => {

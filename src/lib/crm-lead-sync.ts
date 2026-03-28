@@ -1,13 +1,48 @@
 import { prisma } from './prisma.js';
 
+/**
+ * Loja padrão para leads vindos do site/tracking.
+ * Ordem: env → loja com mais imóveis no catálogo (alinha com o que o PDV filtra) → primeira Warehouse.
+ */
 export async function resolveDefaultWarehouseId(): Promise<string | null> {
   const env = process.env.CRM_DEFAULT_WAREHOUSE_ID?.trim();
   if (env) return env;
+
+  try {
+    const byCatalog = await prisma.property.groupBy({
+      by: ['warehouseId'],
+      _count: { _all: true },
+    });
+    if (byCatalog.length) {
+      const sorted = [...byCatalog].sort(
+        (a, b) => (b._count?._all ?? 0) - (a._count?._all ?? 0),
+      );
+      const top = sorted[0]?.warehouseId;
+      if (top) return top;
+    }
+  } catch {
+    // tabela Property indisponível ou migration pendente
+  }
+
   const w = await prisma.warehouse.findFirst({
     orderBy: { createdAt: 'asc' },
     select: { id: true },
   });
   return w?.id ?? null;
+}
+
+async function resolveWarehouseIdForSync(
+  requestedId: string | null | undefined,
+): Promise<string | null> {
+  const raw = requestedId?.trim();
+  if (raw) {
+    const found = await prisma.warehouse.findUnique({
+      where: { id: raw },
+      select: { id: true },
+    });
+    if (found?.id) return found.id;
+  }
+  return resolveDefaultWarehouseId();
 }
 
 function normalizeMeta(o: unknown): Record<string, unknown> | null {
@@ -26,10 +61,13 @@ function normalizeMeta(o: unknown): Record<string, unknown> | null {
 /**
  * Cria/atualiza linha em crm_leads ligada ao visitante de tracking (site / Modo Caça).
  * Só grava se houver telefone ou e-mail no Lead de tracking.
+ *
+ * `warehouseId` opcional (ex.: enviado pelo sax-site via `warehouse_id`) deve existir em `Warehouse`;
+ * caso contrário usa `resolveDefaultWarehouseId()` (catálogo / env).
  */
 export async function syncCrmLeadFromTracking(
   visitorId: string,
-  input?: { source?: string; crmMetadata?: unknown }
+  input?: { source?: string; crmMetadata?: unknown; warehouseId?: string | null },
 ): Promise<void> {
   const crm = prisma as unknown as { crmLead: { upsert: (args: unknown) => Promise<unknown> } };
   if (typeof crm.crmLead?.upsert !== 'function') return;
@@ -45,7 +83,7 @@ export async function syncCrmLeadFromTracking(
   const email = l.email?.trim() || '';
   if (!phone && !email) return;
 
-  const warehouseId = await resolveDefaultWarehouseId();
+  const warehouseId = await resolveWarehouseIdForSync(input?.warehouseId ?? undefined);
   const sourceRaw = (input?.source || 'site').trim().slice(0, 64) || 'site';
   const meta = normalizeMeta(input?.crmMetadata);
   const detailStr = meta ? JSON.stringify(meta) : null;
@@ -78,6 +116,7 @@ export async function syncCrmLeadFromTracking(
       phone: l.phone,
       score: l.score ?? 0,
       lastInteractionAt: l.lastActivityAt ?? new Date(),
+      ...(warehouseId ? { warehouseId } : {}),
       ...(input?.source ? { source: sourceRaw } : {}),
       ...(detailStr != null ? { sourceDetail: detailStr } : {}),
       ...(kind ? { interestPropertyType: kind } : {}),

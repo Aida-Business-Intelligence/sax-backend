@@ -4,6 +4,27 @@ import { prisma } from '../lib/prisma.js';
 
 const router = Router();
 
+function registrationIncompleteFromRow(row: Record<string, unknown>): boolean {
+  const v = row.registration_incomplete ?? row.registrationIncomplete;
+  return v === true || v === 'true' || v === 't' || v === 1 || v === '1';
+}
+
+function activeFromRow(row: Record<string, unknown>): boolean {
+  const v = row.active;
+  if (v === undefined || v === null) return true;
+  return v === true || v === 'true' || v === 't' || v === 1 || v === '1';
+}
+
+/** Qualquer negócio CRM ligado a imóvel deste cliente impede exclusão física (evita dados órfãos). */
+async function clientHasLinkedDeals(clientId: string): Promise<boolean> {
+  const n = await prisma.crmLeadDeal.count({
+    where: {
+      property: { clientId },
+    },
+  });
+  return n > 0;
+}
+
 function formatClient(c: {
   id: string;
   name: string;
@@ -24,7 +45,9 @@ function formatClient(c: {
   marketingConsent?: boolean | null;
   communicationPreference?: string | null;
   createdAt: Date | string;
+  registrationIncomplete?: boolean | null;
 }) {
+  const row = c as unknown as Record<string, unknown>;
   return {
     userid: c.id,
     company: c.name,
@@ -50,7 +73,8 @@ function formatClient(c: {
     marketingConsent: c.marketingConsent ? '1' : '0',
     communicationPreference: c.communicationPreference ?? null,
     datecreated: c.createdAt instanceof Date ? c.createdAt.toISOString().split('T')[0] : String(c.createdAt).split('T')[0],
-    active: '1',
+    active: activeFromRow(row) ? '1' : '0',
+    registration_incomplete: registrationIncompleteFromRow(row) ? '1' : '0',
   };
 }
 
@@ -115,9 +139,12 @@ async function getClient(req: import('express').Request, res: import('express').
         state,
         "marketingConsent",
         "communicationPreference",
+        "registration_incomplete",
+        active,
         "createdAt"
       FROM "Client"
       WHERE id = ${id}
+        AND "deleted_at" IS NULL
       LIMIT 1`;
     if (!client || client.length === 0) {
       res.status(404).json({ message: 'Cliente não encontrado' });
@@ -156,9 +183,13 @@ async function listClients(req: import('express').Request, res: import('express'
             state,
             "marketingConsent",
             "communicationPreference",
+            "registration_incomplete",
+            active,
             "createdAt"
           FROM "Client"
           WHERE "warehouseId" = ${warehouseId}
+            AND "deleted_at" IS NULL
+            AND active = true
           ORDER BY name ASC`
       : await prisma.$queryRaw<Array<Record<string, unknown>>>`
           SELECT
@@ -180,8 +211,12 @@ async function listClients(req: import('express').Request, res: import('express'
             state,
             "marketingConsent",
             "communicationPreference",
+            "registration_incomplete",
+            active,
             "createdAt"
           FROM "Client"
+          WHERE "deleted_at" IS NULL
+            AND active = true
           ORDER BY name ASC`;
     const formatted = list.map((row) => formatClient(row as any));
     res.json(formatted);
@@ -203,6 +238,10 @@ async function createClient(req: import('express').Request, res: import('express
       return;
     }
     const id = randomUUID().replace(/-/g, '');
+    const registrationIncomplete =
+      body.registration_incomplete === true ||
+      body.registration_incomplete === '1' ||
+      body.registration_incomplete === 'true';
     const client = await prisma.$queryRaw<Array<Record<string, unknown>>>`
       INSERT INTO "Client" (
         id,
@@ -223,10 +262,11 @@ async function createClient(req: import('express').Request, res: import('express
         state,
         "marketingConsent",
         "communicationPreference",
+        "registration_incomplete",
         "createdAt",
         "updatedAt"
       ) VALUES (
-        ${id}, ${normalized.name}, ${normalized.email}, ${normalized.phone}, ${normalized.document}, ${normalized.documentType}, ${normalized.birthDate}, ${normalized.gender}, ${normalized.warehouseId}, ${normalized.zip}, ${normalized.address}, ${normalized.addressNumber}, ${normalized.complement}, ${normalized.neighborhood}, ${normalized.city}, ${normalized.state}, ${normalized.marketingConsent}, ${normalized.communicationPreference}, NOW(), NOW()
+        ${id}, ${normalized.name}, ${normalized.email}, ${normalized.phone}, ${normalized.document}, ${normalized.documentType}, ${normalized.birthDate}, ${normalized.gender}, ${normalized.warehouseId}, ${normalized.zip}, ${normalized.address}, ${normalized.addressNumber}, ${normalized.complement}, ${normalized.neighborhood}, ${normalized.city}, ${normalized.state}, ${normalized.marketingConsent}, ${normalized.communicationPreference}, ${registrationIncomplete}, NOW(), NOW()
       )
       RETURNING
         id,
@@ -247,6 +287,8 @@ async function createClient(req: import('express').Request, res: import('express
         state,
         "marketingConsent",
         "communicationPreference",
+        "registration_incomplete",
+        active,
         "createdAt"`;
     res.status(201).json(formatClient(client[0] as any));
   } catch (e) {
@@ -287,8 +329,10 @@ async function updateClient(req: import('express').Request, res: import('express
          state = ${normalized.state},
          "marketingConsent" = ${normalized.marketingConsent},
          "communicationPreference" = ${normalized.communicationPreference},
+         "registration_incomplete" = false,
          "updatedAt" = NOW()
        WHERE id = ${id}
+         AND "deleted_at" IS NULL
        RETURNING
          id,
          name,
@@ -308,6 +352,8 @@ async function updateClient(req: import('express').Request, res: import('express
          state,
          "marketingConsent",
          "communicationPreference",
+         "registration_incomplete",
+         active,
          "createdAt"`;
     if (!client || client.length === 0) {
       res.status(404).json({ message: 'Cliente não encontrado' });
@@ -330,13 +376,58 @@ async function updateClient(req: import('express').Request, res: import('express
 async function removeClients(req: import('express').Request, res: import('express').Response) {
   try {
     const body = req.body as { rows?: string[] };
-    const ids = Array.isArray(body?.rows) ? body.rows : [];
+    const ids = Array.isArray(body?.rows)
+      ? body.rows.map((id) => String(id ?? '').trim()).filter(Boolean)
+      : [];
     if (ids.length === 0) {
       res.status(400).json({ message: 'Nenhum cliente informado' });
       return;
     }
-    await prisma.client.deleteMany({ where: { id: { in: ids } } });
-    res.json({ success: true });
+    const candidates = await prisma.client.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: { id: true },
+    });
+    /** Antes respondia 200 mesmo com 0 linhas — o front “sumia” por refresh mas o pgAdmin continuava igual (IDs errados / outra base). */
+    if (candidates.length === 0) {
+      res.status(400).json({
+        message:
+          'Nenhum cliente foi excluído: nenhum ID bateu com a base desta API. Confira se o PDV usa o mesmo banco que o pgAdmin ou o cliente já foi inativado.',
+        deleted: 0,
+      });
+      return;
+    }
+
+    const candidateIds = candidates.map((c) => c.id);
+    const dealChecks = await Promise.all(
+      candidateIds.map(async (id) => ({
+        id,
+        hasDeals: await clientHasLinkedDeals(id),
+      })),
+    );
+
+    const softIds = dealChecks.filter((x) => x.hasDeals).map((x) => x.id);
+    const hardIds = dealChecks.filter((x) => !x.hasDeals).map((x) => x.id);
+
+    if (softIds.length > 0) {
+      await prisma.client.updateMany({
+        where: { id: { in: softIds } },
+        data: { deletedAt: new Date(), active: false },
+      });
+    }
+
+    let hardDeleted = 0;
+    if (hardIds.length > 0) {
+      const r = await prisma.client.deleteMany({ where: { id: { in: hardIds } } });
+      hardDeleted = r.count;
+    }
+
+    const softInactivated = softIds.length;
+    res.json({
+      success: true,
+      deleted: softInactivated + hardDeleted,
+      softInactivated,
+      hardDeleted,
+    });
   } catch (e) {
     console.error('Erro ao excluir clientes:', e);
     res.status(500).json({ message: 'Erro ao excluir clientes' });
