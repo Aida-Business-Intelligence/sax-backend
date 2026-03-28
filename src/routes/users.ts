@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma.js';
 
@@ -7,7 +8,8 @@ const router = Router();
 /**
  * POST /api/users/list
  * Lista usuários para o PDV (admin > Usuários).
- * Body: { page, pageSize, sortField, sortOrder, search?, type? }
+ * Body: { page, pageSize, sortField, sortOrder, search?, warehouse_id? }
+ * Com `warehouse_id`, filtra usuários ativos dessa loja (para atribuir leads / colaboradores).
  * Resposta: { data: [...], total } no formato esperado pelo front (staffid, firstname, lastname, email, phonenumber, datecreated, role_name).
  */
 const listHandler = async (req: Request, res: Response) => {
@@ -18,12 +20,14 @@ const listHandler = async (req: Request, res: Response) => {
       sortField = 'createdAt',
       sortOrder = 'DESC',
       search = '',
+      warehouse_id: warehouseIdBody,
     } = req.body as {
       page?: number;
       pageSize?: number;
       sortField?: string;
       sortOrder?: string;
       search?: string;
+      warehouse_id?: string;
     };
 
     const skip = Math.max(0, (Number(page) || 1) - 1) * Math.max(1, Math.min(100, Number(pageSize) || 10));
@@ -34,14 +38,22 @@ const listHandler = async (req: Request, res: Response) => {
       ? { [orderByField]: sortOrder?.toUpperCase() === 'ASC' ? 'asc' : 'desc' }
       : orderByField;
 
-    const where = search && String(search).trim()
-      ? {
-          OR: [
-            { email: { contains: String(search).trim(), mode: 'insensitive' as const } },
-            { name: { contains: String(search).trim(), mode: 'insensitive' as const } },
-          ],
-        }
-      : {};
+    const wh = warehouseIdBody?.trim();
+    const clauses: Prisma.UserWhereInput[] = [];
+    if (search && String(search).trim()) {
+      const q = String(search).trim();
+      clauses.push({
+        OR: [
+          { email: { contains: q, mode: 'insensitive' } },
+          { name: { contains: q, mode: 'insensitive' } },
+        ],
+      });
+    }
+    if (wh) {
+      clauses.push({ warehouseId: wh });
+      clauses.push({ active: true });
+    }
+    const where: Prisma.UserWhereInput = clauses.length > 0 ? { AND: clauses } : {};
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({

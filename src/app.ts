@@ -28,9 +28,16 @@ import mailRoutes from './routes/mail.js';
 import helpdeskRoutes from './routes/helpdesk.js';
 import settingsRoutes from './routes/settings.js';
 import leadsRoutes from './routes/leads.js';
+import negociosRoutes from './routes/negocios.js';
+import activitiesRoutes from './routes/activities.js';
 import hrRoutes from './routes/hr.js';
 import siteStoriesRoutes from './routes/site-stories.js';
 import publicFeedRoutes from './routes/public-feed.js';
+import receivablesRoutes from './routes/receivables.js';
+import expensesRoutes from './routes/expenses.js';
+import expensesCategoriesRoutes from './routes/expenses-categories.js';
+import bankAccountsRoutes from './routes/bank-accounts.js';
+import suppliersRoutes from './routes/suppliers.js';
 
 const app = express();
 
@@ -46,7 +53,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
 
 // Confia no primeiro proxy reverso (nginx/traefik) para leitura correta do IP real
 app.set('trust proxy', 1);
@@ -90,7 +97,14 @@ app.use('/api/mail', mailRoutes);
 app.use('/api/helpdesk', helpdeskRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/leads', leadsRoutes);
+app.use('/api/negocios', negociosRoutes);
+app.use('/api/activities', activitiesRoutes);
 app.use('/api/hr', hrRoutes);
+app.use('/api/receivables', receivablesRoutes);
+app.use('/api/expenses', expensesRoutes);
+app.use('/api/expenses_categories', expensesCategoriesRoutes);
+app.use('/api/BankAccounts', bankAccountsRoutes);
+app.use('/api/suppliers', suppliersRoutes);
 
 /** Stub: Meta Lead Ads → crm_leads (configurar verify token + Graph API em fase seguinte). */
 app.post('/api/webhooks/meta-leads', (_req, res) => {

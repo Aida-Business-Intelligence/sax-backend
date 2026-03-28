@@ -4,6 +4,7 @@
   "description": "Backend API SAX - usuários, login, lojas (warehouses), imóveis. Compatível com sax-frontend-pdv e sax-site-front.",
   "main": "dist/server.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc",
     "start": "node dist/server.js",

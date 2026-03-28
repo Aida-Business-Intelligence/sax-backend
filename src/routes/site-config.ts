@@ -213,10 +213,21 @@ router.get('/', async (_req, res, next) => {
     }
     if (proprietariosContentRaw === undefined) proprietariosContentRaw = null;
 
-    const huntModeEnabled =
-      typeof (row as { huntModeEnabled?: boolean })?.huntModeEnabled === 'boolean'
-        ? (row as { huntModeEnabled: boolean }).huntModeEnabled
-        : false;
+    let huntModeEnabled = false;
+    const rowHunt = (row as { huntModeEnabled?: boolean })?.huntModeEnabled;
+    if (typeof rowHunt === 'boolean') {
+      huntModeEnabled = rowHunt;
+    } else if (row?.id) {
+      try {
+        const rawHunt = await prisma.$queryRaw<[{ huntModeEnabled: boolean }]>`
+          SELECT "huntModeEnabled" FROM "SiteConfig" WHERE id = ${row.id} LIMIT 1
+        `;
+        const v = rawHunt?.[0]?.huntModeEnabled;
+        if (typeof v === 'boolean') huntModeEnabled = v;
+      } catch {
+        // coluna ausente em DB antigo
+      }
+    }
 
     res.json({
       featuredPropertyIds,

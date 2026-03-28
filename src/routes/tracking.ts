@@ -312,7 +312,17 @@ router.post('/lead/identify', async (req, res, next) => {
         ? (req.body as { source: string }).source.trim().slice(0, 64)
         : undefined;
     const crmMetadata = (req.body as { crmMetadata?: unknown }).crmMetadata;
-    await syncCrmLeadFromTracking(visitor.id, { source, crmMetadata }).catch(() => {});
+    const warehouseIdBody =
+      typeof (req.body as { warehouse_id?: string })?.warehouse_id === 'string'
+        ? (req.body as { warehouse_id: string }).warehouse_id.trim().slice(0, 128) || undefined
+        : undefined;
+    await syncCrmLeadFromTracking(visitor.id, {
+      source,
+      crmMetadata,
+      warehouseId: warehouseIdBody,
+    }).catch((err) => {
+      console.error('[tracking/lead/identify] syncCrmLeadFromTracking', err);
+    });
 
     return res.status(201).json({ success: true });
   } catch (e) {
