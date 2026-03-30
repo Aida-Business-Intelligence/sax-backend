@@ -306,7 +306,7 @@ async function update(req: Request, res: Response) {
       ...(b.profile_extra !== undefined && {
         profileExtra:
           b.profile_extra === null
-            ? Prisma.DbNull
+            ? Prisma.JsonNull
             : (b.profile_extra as Prisma.InputJsonValue),
       }),
     };
