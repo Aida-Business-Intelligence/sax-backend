@@ -1,4 +1,5 @@
 import { prisma } from './prisma.js';
+import { maybeAssignLeadFromRules } from './lead-distribution.js';
 
 /**
  * Loja padrão para leads vindos do site/tracking.
@@ -93,7 +94,7 @@ export async function syncCrmLeadFromTracking(
   const adTitle =
     sourceRaw === 'modo_caca' ? 'Modo Caça · Site' : sourceRaw === 'meta_ads' ? 'Meta Lead Ads' : null;
 
-  await crm.crmLead.upsert({
+  const row = await crm.crmLead.upsert({
     where: { trackingVisitorId: visitorId },
     create: {
       trackingVisitorId: visitorId,
@@ -124,4 +125,8 @@ export async function syncCrmLeadFromTracking(
       ...(adTitle != null ? { adTitle } : {}),
     },
   });
+  const created = row as { id: string; assignedUserId?: string | null };
+  if (created?.id && !created.assignedUserId) {
+    await maybeAssignLeadFromRules(created.id);
+  }
 }

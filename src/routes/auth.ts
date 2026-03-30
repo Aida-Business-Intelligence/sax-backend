@@ -65,10 +65,15 @@ router.post('/data', async (req, res, next) => {
     const isSuperAdmin = user.role.name === 'Super Admin';
 
     // Formato esperado pelo sax-frontend-pdv (signin.jsx). admin: '1' = Super Admin (acesso total).
+    const avatarUrl = user.avatarUrl ?? null;
     const responseUser = {
       id: user.id,
       email: user.email,
       name: user.name,
+      phone: user.phone ?? null,
+      avatarUrl,
+      avatar: avatarUrl,
+      photoURL: avatarUrl,
       admin: isSuperAdmin ? '1' : '0',
       roles: {
         name: user.role.name,

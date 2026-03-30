@@ -38,6 +38,9 @@ import expensesRoutes from './routes/expenses.js';
 import expensesCategoriesRoutes from './routes/expenses-categories.js';
 import bankAccountsRoutes from './routes/bank-accounts.js';
 import suppliersRoutes from './routes/suppliers.js';
+import kanbanRoutes from './routes/kanban.js';
+import { metaLeadsWebhookRouter } from './routes/webhooks-meta-leads.js';
+import { googleLeadsWebhookRouter } from './routes/webhooks-google-leads.js';
 
 const app = express();
 
@@ -53,10 +56,21 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json({ limit: '100mb' }));
 
 // Confia no primeiro proxy reverso (nginx/traefik) para leitura correta do IP real
 app.set('trust proxy', 1);
+
+/** Lead Ads Meta: corpo JSON bruto (obrigatório para validar X-Hub-Signature-256). */
+app.use(
+  '/api/webhooks/meta-leads',
+  express.raw({ type: 'application/json' }),
+  metaLeadsWebhookRouter
+);
+
+app.use(express.json({ limit: '100mb' }));
+
+/** Leads Google / Zapier — JSON + header X-Sax-Webhook-Secret */
+app.use('/api/webhooks/google-leads', googleLeadsWebhookRouter);
 
 // Rate limit: em dev mais alto para não travar; em produção protege o servidor
 const isDev = config.nodeEnv === 'development';
@@ -105,15 +119,7 @@ app.use('/api/expenses', expensesRoutes);
 app.use('/api/expenses_categories', expensesCategoriesRoutes);
 app.use('/api/BankAccounts', bankAccountsRoutes);
 app.use('/api/suppliers', suppliersRoutes);
-
-/** Stub: Meta Lead Ads → crm_leads (configurar verify token + Graph API em fase seguinte). */
-app.post('/api/webhooks/meta-leads', (_req, res) => {
-  res.status(501).json({
-    ok: false,
-    message:
-      'Webhook Meta Lead Ads em preparação. Configure o app no Meta, token de verificação e mapeamento de formulários para crm_leads.',
-  });
-});
+app.use('/api/kanban', kanbanRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'sax-backend' });

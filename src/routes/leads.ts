@@ -10,6 +10,7 @@ import {
 } from "../lib/tracking-score.js";
 import { formatPropriedade } from "./propriedades.js";
 import { resolvePropertyMediaPublicUrl } from "../lib/storage.js";
+import { maybeAssignLeadFromRules } from "../lib/lead-distribution.js";
 
 const router = Router();
 router.use(authMiddleware);
@@ -771,12 +772,18 @@ router.post("/create/", async (req: Request, res: Response, next) => {
       score?: number | null;
       observacoes?: string;
       warehouse_id?: string;
+      assigned_user_id?: string | null;
     };
 
     const warehouseId =
       body.warehouse_id ||
       user.warehouseId ||
       (await resolveDefaultWarehouseId());
+
+    const assignedManual =
+      body.assigned_user_id != null && String(body.assigned_user_id).trim() !== ""
+        ? String(body.assigned_user_id).trim()
+        : null;
 
     const lead = await crm.crmLead.create({
       data: {
@@ -794,8 +801,13 @@ router.post("/create/", async (req: Request, res: Response, next) => {
             : 0,
         notes: body.observacoes?.trim() || null,
         lastInteractionAt: new Date(),
+        ...(assignedManual ? { assignedUserId: assignedManual } : {}),
       },
     });
+
+    if (!assignedManual) {
+      await maybeAssignLeadFromRules(lead.id);
+    }
 
     res.status(201).json({ success: true, data: { id: lead.id } });
   } catch (e) {

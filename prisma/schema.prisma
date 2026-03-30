@@ -23,6 +23,10 @@ model User {
   password    String
   name        String?
   phone       String?
+  /// URL pública da foto (CDN); mesmo registro exibido no PDV /account e no admin.
+  avatarUrl   String?   @map("avatar_url")
+  /// Dados extras do perfil PDV (endereço, sobre, etc.) — não duplicados na tabela admin.
+  profileExtra Json?    @map("profile_extra")
   active      Boolean   @default(true)
   roleId      String
   role        Role      @relation(fields: [roleId], references: [id])
@@ -38,6 +42,19 @@ model User {
   crmLeadInteractions     CrmLeadInteraction[] @relation("CrmLeadInteractionAuthor")
   hrEmployee              HrEmployee?
   siteStoriesCreated      SiteStory[] @relation("SiteStoryAuthor")
+  kanbanBoard             KanbanBoard?
+}
+
+/// Quadro Kanban geral (Ferramentas no PDV): estado JSON { columns, tasks }.
+model KanbanBoard {
+  id        String   @id @default(cuid())
+  userId    String   @unique @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stateJson String   @default("{}") @map("state_json") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("kanban_boards")
 }
 
 model Warehouse {
@@ -63,6 +80,8 @@ model Warehouse {
   ibgeMunicipioId String? @map("ibge_municipio_id")
   note          String?   // observações
   display       Boolean   @default(true) // ativo/inativo
+  /// JSON: chaves do PDV (update_config): helpdesk_webrtc_settings, integrations_settings, etc.
+  pdvSettingsJson String? @map("pdv_settings_json") @db.Text
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   users         User[]
