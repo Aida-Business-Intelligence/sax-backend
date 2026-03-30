@@ -42,17 +42,50 @@ model User {
   crmLeadInteractions     CrmLeadInteraction[] @relation("CrmLeadInteractionAuthor")
   hrEmployee              HrEmployee?
   siteStoriesCreated      SiteStory[] @relation("SiteStoryAuthor")
-  kanbanBoard             KanbanBoard?
+  kanbanWorkspacesCreated KanbanWorkspace[] @relation("KanbanWorkspaceCreatedBy")
+  kanbanWorkspaceMembers  KanbanWorkspaceMember[]
 }
 
-/// Quadro Kanban geral (Ferramentas no PDV): estado JSON { columns, tasks }.
+/// Espaço de trabalho (estilo Jira): cada um tem quadro Kanban e equipa próprios.
+model KanbanWorkspace {
+  id          String   @id @default(cuid())
+  name        String
+  /// Chave curta opcional exibida junto ao nome (ex.: NEG, WEB).
+  key         String?  @db.VarChar(16)
+  createdById String   @map("created_by_id")
+  createdBy   User     @relation("KanbanWorkspaceCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  warehouseId String? @map("warehouse_id")
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  board       KanbanBoard?
+  members     KanbanWorkspaceMember[]
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("kanban_workspaces")
+}
+
+model KanbanWorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String   @map("workspace_id")
+  workspace   KanbanWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String   @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// admin | member — admins podem renomear espaço e gerir equipa.
+  role        String   @default("member")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([workspaceId, userId])
+  @@map("kanban_workspace_members")
+}
+
+/// Quadro Kanban: um por espaço de trabalho (estado JSON { columns, tasks, meta }).
 model KanbanBoard {
-  id        String   @id @default(cuid())
-  userId    String   @unique @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  stateJson String   @default("{}") @map("state_json") @db.Text
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(cuid())
+  workspaceId String   @unique @map("workspace_id")
+  workspace   KanbanWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stateJson   String   @default("{}") @map("state_json") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("kanban_boards")
 }
@@ -92,6 +125,7 @@ model Warehouse {
   crmLeads      CrmLead[]
   hrEmployees   HrEmployee[]
   siteStories   SiteStory[]
+  kanbanWorkspaces KanbanWorkspace[]
   finCategories   FinCategory[]
   finBankAccounts FinBankAccount[]
   finTransactions FinTransaction[]
