@@ -20,7 +20,9 @@ RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 appuser
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+# --ignore-scripts: postinstall roda "prisma generate", mas prisma CLI ainda não existe
+# nesta etapa (omit=dev). O generate explícito vem abaixo após copiar o Prisma do builder.
+RUN npm ci --omit=dev --ignore-scripts
 
 # Copia CLI do Prisma (é devDependency, não vem no npm ci --omit=dev)
 COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
