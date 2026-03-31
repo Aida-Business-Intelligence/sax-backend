@@ -137,6 +137,53 @@ router.get(
   })
 );
 
+/** Exclusão em massa (ids da loja). Deve ficar antes de GET /:id. */
+router.post(
+  '/bulk-delete',
+  asyncHandler(async (req: Authed, res) => {
+    const body = req.body as { warehouse_id?: string; ids?: unknown };
+    const warehouseId = assertWarehouseAccess(req.user, body.warehouse_id);
+    const ids = Array.isArray(body.ids)
+      ? body.ids.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    if (!ids.length) {
+      res.status(400).json({ status: false, message: 'ids é obrigatório' });
+      return;
+    }
+    await prisma.$executeRaw`
+      DELETE FROM suppliers
+      WHERE warehouse_id = ${warehouseId}
+        AND id IN (${Prisma.join(ids)})
+    `;
+    res.json({ status: true, deleted: ids.length });
+  })
+);
+
+/** Ativar / desativar em massa. */
+router.post(
+  '/bulk-active',
+  asyncHandler(async (req: Authed, res) => {
+    const body = req.body as { warehouse_id?: string; ids?: unknown; active?: unknown };
+    const warehouseId = assertWarehouseAccess(req.user, body.warehouse_id);
+    const ids = Array.isArray(body.ids)
+      ? body.ids.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    if (!ids.length) {
+      res.status(400).json({ status: false, message: 'ids é obrigatório' });
+      return;
+    }
+    const active = !(body.active === false || body.active === '0' || body.active === 0);
+    const now = new Date();
+    await prisma.$executeRaw`
+      UPDATE suppliers
+      SET active = ${active}, updated_at = ${now}
+      WHERE warehouse_id = ${warehouseId}
+        AND id IN (${Prisma.join(ids)})
+    `;
+    res.json({ status: true, updated: ids.length });
+  })
+);
+
 router.get(
   '/:id',
   asyncHandler(async (req: Authed, res) => {
@@ -170,10 +217,13 @@ router.post(
       (req.body as { warehouse_id?: string }).warehouse_id
     );
     const id = randomUUID();
+    /** Migração define `updated_at` NOT NULL sem DEFAULT; INSERT raw deve preencher. */
+    const now = new Date();
     const created = await prisma.$queryRaw<SupplierApi[]>`
       INSERT INTO suppliers (
         id, warehouse_id, name, person_type, document, email, phone,
-        supply_kind, service_type, product_type, notes, active
+        supply_kind, service_type, product_type, notes, active,
+        created_at, updated_at
       )
       VALUES (
         ${id},
@@ -187,7 +237,9 @@ router.post(
         ${body.serviceType},
         ${body.productType},
         ${body.notes},
-        ${body.active}
+        ${body.active},
+        ${now},
+        ${now}
       )
       RETURNING ${SUPPLIER_COLUMNS}
     `;
@@ -217,6 +269,7 @@ router.put(
       res.status(400).json({ status: false, message: 'Nome é obrigatório' });
       return;
     }
+    const updatedAt = new Date();
     const updated = await prisma.$queryRaw<SupplierApi[]>`
       UPDATE suppliers SET
         name = ${body.name},
@@ -228,7 +281,8 @@ router.put(
         service_type = ${body.serviceType},
         product_type = ${body.productType},
         notes = ${body.notes},
-        active = ${body.active}
+        active = ${body.active},
+        updated_at = ${updatedAt}
       WHERE id = ${id}
       RETURNING ${SUPPLIER_COLUMNS}
     `;
