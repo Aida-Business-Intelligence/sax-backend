@@ -129,6 +129,7 @@ model Warehouse {
   finCategories   FinCategory[]
   finBankAccounts FinBankAccount[]
   finTransactions FinTransaction[]
+  finOrigins      FinOrigin[]
   suppliers       Supplier[]
 }
 
@@ -454,6 +455,9 @@ model SiteVisitor {
   country     String?
   city        String?
   region      String?
+  /// Geolocalização: GPS do navegador (se enviado) ou centro aproximado por IP.
+  latitude    Float?
+  longitude   Float?
   referrer    String?
   utmSource   String?
   utmMedium   String?
@@ -622,6 +626,31 @@ model SiteAnalyticsEvent {
   @@index([sessionId])
   @@index([eventType])
   @@index([createdAt])
+}
+
+/// Mensagens do operador (PDV) para o visitante no site — pop-up ou chat (polling).
+model LiveVisitorMessage {
+  id        String   @id @default(cuid())
+  sessionId String   @map("session_id") @db.VarChar(128)
+  kind      String   @db.VarChar(16) // popup | chat
+  body      String   @db.Text
+  delivered Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([sessionId, delivered])
+  @@index([createdAt])
+  @@map("live_visitor_messages")
+}
+
+/// Respostas do visitante no site (chat com o operador / captação).
+model VisitorChatReply {
+  id        String   @id @default(cuid())
+  sessionId String   @map("session_id") @db.VarChar(128)
+  body      String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([sessionId, createdAt])
+  @@map("visitor_chat_replies")
 }
 
 // ----------------------------------------------------------------------
@@ -881,6 +910,20 @@ model FinBankAccount {
 
   @@index([warehouseId])
   @@map("fin_bank_accounts")
+}
+
+/// Origem de receita (catálogo por loja) — usado no PDV em “Origem”.
+model FinOrigin {
+  id          String   @id @default(cuid())
+  warehouseId String   @map("warehouse_id")
+  name        String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([warehouseId])
+  @@map("fin_origins")
 }
 
 model FinTransaction {

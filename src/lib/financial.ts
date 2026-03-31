@@ -49,6 +49,8 @@ function utcCalendarDateString(d: Date): string {
 }
 
 export function mapReceivableRow(t: FinTransaction & { category: FinCategory | null }) {
+  const pmid = parseReceivablePaymentModeId(t);
+  const pmLabel = receivablePaymentModeLabel(pmid);
   return {
     id: t.id,
     company: t.company,
@@ -57,8 +59,8 @@ export function mapReceivableRow(t: FinTransaction & { category: FinCategory | n
     due_date: utcCalendarDateString(t.dueDate),
     category: t.categoryId,
     category_name: t.category?.name ?? null,
-    payment_mode_name: 'N/A',
-    paymentmode: null,
+    payment_mode_name: pmLabel || 'N/A',
+    paymentmode: pmid,
     note: t.note ?? '',
     status: t.status === 'paid' ? 'received' : t.status === 'cancelled' ? 'cancelled' : 'pending',
     receivable_identifier: t.reference ?? '-',
@@ -70,6 +72,31 @@ function readMeta(t: FinTransaction): Record<string, unknown> {
   return m && typeof m === 'object' && !Array.isArray(m) ? (m as Record<string, unknown>) : {};
 }
 
+/** Id → rótulo (alinhado a GET /receivables/payment_modes/). */
+export function receivablePaymentModeLabel(id: number | null | undefined): string {
+  if (id == null || Number.isNaN(Number(id))) return '';
+  const n = Number(id);
+  const labels: Record<number, string> = {
+    1: 'Dinheiro',
+    2: 'PIX',
+    3: 'Transferência',
+    4: 'Boleto',
+    5: 'Cartão',
+  };
+  return labels[n] ?? '';
+}
+
+export function parseReceivablePaymentModeId(t: FinTransaction): number | null {
+  const meta = readMeta(t);
+  const pmRaw = meta.paymentModeId ?? meta.paymentmode;
+  if (typeof pmRaw === 'number' && !Number.isNaN(pmRaw)) return pmRaw;
+  if (pmRaw != null && String(pmRaw).trim() !== '') {
+    const n = parseInt(String(pmRaw), 10);
+    if (!Number.isNaN(n)) return n;
+  }
+  return null;
+}
+
 /** Detalhe completo para edição de contas a receber (PDV). */
 export function mapReceivableDetail(t: FinTransaction & { category: FinCategory | null }) {
   const meta = readMeta(t);
@@ -77,9 +104,13 @@ export function mapReceivableDetail(t: FinTransaction & { category: FinCategory 
   const isRaw = meta.is_client;
   const is_client = isRaw === 0 || isRaw === '0' || isRaw === false ? 0 : 1;
 
+  const paymentmode = parseReceivablePaymentModeId(t);
+  const paymentModeLabel = receivablePaymentModeLabel(paymentmode);
+
   return {
     id: t.id,
     category: t.categoryId ?? '',
+    category_name: t.category?.name ?? '',
     amount: Number(t.amount),
     amount_base: Number(t.amount),
     reference_no: t.reference ?? '',
@@ -90,7 +121,14 @@ export function mapReceivableDetail(t: FinTransaction & { category: FinCategory 
     is_client,
     billable: 0,
     invoiceid: '',
-    paymentmode: null,
+    paymentmode,
+    payment_mode_name: paymentModeLabel,
+    payment_mode: {
+      name: paymentModeLabel,
+      is_credit_card: paymentmode === 5 ? '1' : '0',
+      is_boleto: paymentmode === 4 ? '1' : '0',
+      is_check: '0',
+    },
     date: utcCalendarDateString(t.date),
     due_date: utcCalendarDateString(t.dueDate),
     reference_date: utcCalendarDateString(t.date),
@@ -111,7 +149,8 @@ export function mapReceivableDetail(t: FinTransaction & { category: FinCategory 
     due_day_2: 1,
     bank_account_id: t.bankAccountId ?? '',
     receivables_document: typeof meta.receivables_document === 'string' ? meta.receivables_document : '',
-    origin_id: '',
+    origin_id: typeof meta.originId === 'string' ? meta.originId : '',
+    property_ref: typeof meta.propertyRef === 'string' ? meta.propertyRef : '',
     registration_date: null,
     nfe_key: '',
     nfe_number: '',
@@ -187,6 +226,18 @@ export function buildExpenseEditResponse(
     tipo_juros: typeof meta.tipo_juros === 'string' ? meta.tipo_juros : 'simples',
     juros_apartir: Number(meta.juros_apartir ?? 1),
     clientid: typeof meta.clientid === 'string' ? meta.clientid : null,
+    hr_employee_id: typeof meta.hr_employee_id === 'string' ? meta.hr_employee_id : null,
+    supplier_id: typeof meta.supplier_id === 'string' ? meta.supplier_id : null,
+    favorecido_kind:
+      typeof meta.favorecido_kind === 'string'
+        ? meta.favorecido_kind
+        : typeof meta.supplier_id === 'string' && meta.supplier_id
+          ? 'supplier'
+          : typeof meta.clientid === 'string' && meta.clientid
+            ? 'client'
+            : typeof meta.hr_employee_id === 'string' && meta.hr_employee_id
+              ? 'employee'
+              : null,
     expense_document: typeof meta.expense_document === 'string' ? meta.expense_document : null,
     nfe_key: typeof meta.nfe_key === 'string' ? meta.nfe_key : '',
     nfe_number: typeof meta.nfe_number === 'string' ? meta.nfe_number : '',

@@ -125,9 +125,12 @@ router.post(
       ];
     }
 
-    const sortField = String(body.sortField ?? 'date');
-    const sortOrder = String(body.sortOrder ?? 'DESC').toLowerCase() === 'asc' ? 'asc' : 'desc';
-    const orderBy: Prisma.FinTransactionOrderByWithRelationInput =
+    const sortField = String(body.sortField ?? 'due_date');
+    // Vencimento: ordem crescente por defeito (próximos primeiro). Emissão/valor: desc por defeito.
+    const defaultSortOrder = sortField === 'due_date' ? 'ASC' : 'DESC';
+    const sortOrder =
+      String(body.sortOrder ?? defaultSortOrder).toLowerCase() === 'asc' ? 'asc' : 'desc';
+    const primaryOrder: Prisma.FinTransactionOrderByWithRelationInput =
       sortField === 'due_date'
         ? { dueDate: sortOrder }
         : sortField === 'amount'
@@ -135,6 +138,11 @@ router.post(
           : sortField === 'company'
             ? { company: sortOrder }
             : { date: sortOrder };
+    /** Desempate estável: edições não devem “baralhar” linhas com o mesmo vencimento. */
+    const orderBy: Prisma.FinTransactionOrderByWithRelationInput[] = [
+      primaryOrder,
+      { id: 'asc' },
+    ];
 
     const [total, rows] = await Promise.all([
       prisma.finTransaction.count({ where }),
@@ -159,34 +167,57 @@ router.post(
 router.post(
   '/payment/',
   asyncHandler(async (req: Authed, res) => {
-    const body = req.body as { id?: string; warehouse_id?: string; payment_date?: string };
+    const body = req.body as Record<string, unknown>;
     const id = String(body.id ?? '').trim();
     if (!id) {
       res.status(400).json({ status: false, message: 'id é obrigatório' });
       return;
     }
     const existing = await prisma.finTransaction.findFirst({
-      where: { id, kind: KIND_RECEIVABLE },
+      where: { id, kind: KIND_RECEIVABLE, status: 'pending' },
     });
     if (!existing) {
-      res.status(404).json({ status: false, message: 'Título não encontrado' });
+      res.status(404).json({ status: false, message: 'Título não encontrado ou já baixado' });
       return;
     }
     assertWarehouseAccess(req.user, existing.warehouseId);
-    const payDay = body.payment_date ? new Date(body.payment_date) : new Date();
+    const payDay = body.payment_date ? new Date(String(body.payment_date)) : new Date();
     if (Number.isNaN(payDay.getTime())) {
       res.status(400).json({ status: false, message: 'payment_date inválido' });
       return;
     }
 
-    const updated = await prisma.finTransaction.updateMany({
-      where: { id, kind: KIND_RECEIVABLE, status: 'pending' },
-      data: { status: 'paid', paidAt: payDay },
-    });
-    if (updated.count === 0) {
-      res.status(404).json({ status: false, message: 'Título já baixado ou cancelado' });
-      return;
+    const prevMeta =
+      existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+
+    const paymentModeRaw = body.paymentmode ?? body.payment_mode;
+    let paymentModeId: number | null = null;
+    if (paymentModeRaw != null && String(paymentModeRaw).trim() !== '') {
+      const n = parseInt(String(paymentModeRaw), 10);
+      if (Number.isFinite(n) && n >= 1 && n <= 99) paymentModeId = n;
     }
+
+    const bankRaw = body.bank_account_id;
+    const bankAccountId =
+      bankRaw != null && String(bankRaw).trim() !== '' ? String(bankRaw).trim() : existing.bankAccountId;
+
+    const metadata: Prisma.InputJsonValue = {
+      ...prevMeta,
+      ...(paymentModeId != null ? { paymentModeId } : {}),
+    };
+
+    await prisma.finTransaction.update({
+      where: { id },
+      data: {
+        status: 'paid',
+        paidAt: payDay,
+        bankAccountId,
+        metadata,
+      },
+    });
+
     res.json({ success: true, status: true, message: 'OK' });
   })
 );
@@ -272,9 +303,31 @@ router.post(
         ? String(payload.receivable_identifier).trim()
         : null;
 
+    const originIdIn =
+      payload.origin_id != null && String(payload.origin_id).trim()
+        ? String(payload.origin_id).trim()
+        : '';
+    const propertyRefIn =
+      payload.property_ref != null && String(payload.property_ref).trim()
+        ? String(payload.property_ref).trim()
+        : '';
+
+    const paymentModeRaw = payload.paymentmode ?? payload.payment_mode;
+    const paymentModeNum =
+      paymentModeRaw != null && String(paymentModeRaw).trim() !== ''
+        ? parseInt(String(paymentModeRaw), 10)
+        : NaN;
+    const paymentModeId =
+      Number.isFinite(paymentModeNum) && paymentModeNum >= 1 && paymentModeNum <= 99
+        ? paymentModeNum
+        : null;
+
     const metadata: Prisma.InputJsonValue = {
       clientId: clientId || null,
       is_client: payload.is_client != null ? Number(payload.is_client) : 1,
+      originId: originIdIn || null,
+      propertyRef: propertyRefIn || null,
+      paymentModeId,
     };
 
     const created = await prisma.finTransaction.create({
@@ -320,10 +373,18 @@ router.get('/payment_modes/', (_req: Request, res: Response) => {
 });
 
 router.get('/clients/', asyncHandler(async (req: Authed, res) => {
-  const q = req.query as { warehouse_id?: string; type?: string; pageSize?: string };
+  const q = req.query as { warehouse_id?: string; type?: string; pageSize?: string; search?: string };
   const warehouseId = assertWarehouseAccess(req.user, q.warehouse_id);
+  const search = String(q.search ?? '').trim();
   const clients = await prisma.client.findMany({
-    where: { warehouseId, deletedAt: null, active: true },
+    where: {
+      warehouseId,
+      deletedAt: null,
+      active: true,
+      ...(search
+        ? { name: { contains: search, mode: Prisma.QueryMode.insensitive } }
+        : {}),
+    },
     select: { id: true, name: true },
     take: Math.min(500, parseInt(String(q.pageSize ?? '500'), 10) || 500),
     orderBy: { name: 'asc' },
@@ -433,10 +494,36 @@ router.post(
       existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
         ? (existing.metadata as Record<string, unknown>)
         : {};
+    const originIdUp =
+      payload.origin_id != null && String(payload.origin_id).trim()
+        ? String(payload.origin_id).trim()
+        : '';
+    const propertyRefUp =
+      payload.property_ref != null && String(payload.property_ref).trim()
+        ? String(payload.property_ref).trim()
+        : '';
+
+    const paymentModeRawUp = payload.paymentmode ?? payload.payment_mode;
+    let paymentModeIdUp: number | null = null;
+    if (paymentModeRawUp != null && String(paymentModeRawUp).trim() !== '') {
+      const n = parseInt(String(paymentModeRawUp), 10);
+      if (Number.isFinite(n) && n >= 1 && n <= 99) paymentModeIdUp = n;
+    } else if (prevMeta.paymentModeId != null) {
+      const prev = prevMeta.paymentModeId;
+      paymentModeIdUp =
+        typeof prev === 'number'
+          ? prev
+          : parseInt(String(prev), 10);
+      if (Number.isNaN(paymentModeIdUp as number)) paymentModeIdUp = null;
+    }
+
     const metadata: Prisma.InputJsonValue = {
       ...prevMeta,
       clientId: clientId || null,
       is_client: payload.is_client != null ? Number(payload.is_client) : prevMeta.is_client ?? 1,
+      originId: originIdUp || null,
+      propertyRef: propertyRefUp || null,
+      paymentModeId: paymentModeIdUp,
     };
 
     await prisma.finTransaction.update({
@@ -525,7 +612,7 @@ router.post(
       prisma.finTransaction.findMany({
         where,
         include: { category: true },
-        orderBy: { dueDate: 'asc' },
+        orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
         skip: page0 * pageSize,
         take: pageSize,
       }),

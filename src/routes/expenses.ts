@@ -21,6 +21,22 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 type Authed = Request & { user: { id: string; warehouseId: string | null } };
 
+function getHrEmployeeDelegate() {
+  const hr = (prisma as { hrEmployee?: typeof prisma.hrEmployee }).hrEmployee;
+  if (!hr || typeof (hr as { findFirst?: unknown }).findFirst !== 'function') return null;
+  return hr;
+}
+
+async function resolveHrEmployeeName(warehouseId: string, employeeId: string): Promise<string> {
+  const hr = getHrEmployeeDelegate();
+  if (!hr) return '';
+  const emp = await hr.findFirst({
+    where: { id: employeeId, warehouseId, status: 'active' },
+    select: { fullName: true },
+  });
+  return emp?.fullName ?? '';
+}
+
 function asyncHandler(
   fn: (req: Authed, res: Response) => Promise<void>
 ): (req: Request, res: Response) => void {
@@ -378,6 +394,29 @@ async function resolveClientName(warehouseId: string, clientId: string | null): 
   return c?.name ?? '';
 }
 
+async function resolveSupplierName(warehouseId: string, supplierId: string | null): Promise<string> {
+  if (!supplierId) return '';
+  const s = await prisma.supplier.findFirst({
+    where: { id: supplierId, warehouseId, active: true },
+    select: { name: true },
+  });
+  return s?.name ?? '';
+}
+
+async function resolveFavorecidoDisplayName(
+  warehouseId: string,
+  meta: Record<string, unknown> | null
+): Promise<string> {
+  if (!meta) return '';
+  const sid = typeof meta.supplier_id === 'string' ? meta.supplier_id : null;
+  const cid = typeof meta.clientid === 'string' ? meta.clientid : null;
+  const heid = typeof meta.hr_employee_id === 'string' ? meta.hr_employee_id : null;
+  if (sid) return resolveSupplierName(warehouseId, sid);
+  if (cid) return resolveClientName(warehouseId, cid);
+  if (heid) return resolveHrEmployeeName(warehouseId, heid);
+  return '';
+}
+
 router.get(
   '/get/:id',
   asyncHandler(async (req: Authed, res) => {
@@ -392,9 +431,8 @@ router.get(
     }
     assertWarehouseAccess(req.user, t.warehouseId);
     const meta = t.metadata as Record<string, unknown> | null;
-    const cid = meta && typeof meta.clientid === 'string' ? meta.clientid : null;
-    const clientName = await resolveClientName(t.warehouseId, cid);
-    const edit = buildExpenseEditResponse(t, clientName);
+    const favorecidoName = await resolveFavorecidoDisplayName(t.warehouseId, meta);
+    const edit = buildExpenseEditResponse(t, favorecidoName);
     res.json({
       status: true,
       data: {
@@ -420,9 +458,8 @@ router.get(
     }
     assertWarehouseAccess(req.user, t.warehouseId);
     const meta = t.metadata as Record<string, unknown> | null;
-    const cid = meta && typeof meta.clientid === 'string' ? meta.clientid : null;
-    const clientName = await resolveClientName(t.warehouseId, cid);
-    res.json({ status: true, data: buildExpenseEditResponse(t, clientName) });
+    const favorecidoName = await resolveFavorecidoDisplayName(t.warehouseId, meta);
+    res.json({ status: true, data: buildExpenseEditResponse(t, favorecidoName) });
   })
 );
 
@@ -446,14 +483,40 @@ router.post(
     }
 
     const expenseName = String(payload.expense_name ?? '').trim();
+    const supplierIdRaw = payload.supplier_id != null ? String(payload.supplier_id).trim() : '';
+    const clientIdRaw = payload.clientid != null ? String(payload.clientid).trim() : '';
+    const hrEmployeeIdRaw =
+      payload.hr_employee_id != null ? String(payload.hr_employee_id).trim() : '';
+
     let company = expenseName || 'Despesa';
-    const clientId = payload.clientid != null ? String(payload.clientid).trim() : '';
-    if (clientId) {
-      const c = await prisma.client.findFirst({
-        where: { id: clientId, deletedAt: null, warehouseId },
+    let resolvedClientId = '';
+    let resolvedHrEmployeeId = '';
+    let resolvedSupplierId = '';
+
+    if (supplierIdRaw) {
+      const s = await prisma.supplier.findFirst({
+        where: { id: supplierIdRaw, warehouseId, active: true },
         select: { name: true },
       });
-      if (c) company = c.name;
+      if (s) {
+        company = s.name;
+        resolvedSupplierId = supplierIdRaw;
+      }
+    } else if (clientIdRaw) {
+      const c = await prisma.client.findFirst({
+        where: { id: clientIdRaw, deletedAt: null, warehouseId },
+        select: { name: true },
+      });
+      if (c) {
+        company = c.name;
+        resolvedClientId = clientIdRaw;
+      }
+    } else if (hrEmployeeIdRaw) {
+      const name = await resolveHrEmployeeName(warehouseId, hrEmployeeIdRaw);
+      if (name) {
+        company = name;
+        resolvedHrEmployeeId = hrEmployeeIdRaw;
+      }
     }
 
     const parcelas = Array.isArray(payload.parcelas_fiscais) ? payload.parcelas_fiscais : [];
@@ -486,7 +549,16 @@ router.post(
     const totalParcelas = parcelas.length > 0 ? parcelas.length : 1;
     const metadata = {
       expense_name: expenseName || company,
-      clientid: clientId || null,
+      clientid: resolvedClientId || null,
+      hr_employee_id: resolvedHrEmployeeId || null,
+      supplier_id: resolvedSupplierId || null,
+      favorecido_kind: resolvedSupplierId
+        ? 'supplier'
+        : resolvedClientId
+          ? 'client'
+          : resolvedHrEmployeeId
+            ? 'employee'
+            : null,
       parcelas_fiscais: parcelas,
       total_parcelas: totalParcelas,
       valor_ac: payload.valor_ac != null ? Number(payload.valor_ac) : 0,
@@ -560,14 +632,69 @@ router.post(
       return;
     }
 
+    const prevMeta =
+      existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+
     let company = existing.company;
-    const clientId = payload.clientid != null ? String(payload.clientid).trim() : '';
-    if (clientId) {
-      const c = await prisma.client.findFirst({
-        where: { id: clientId, deletedAt: null, warehouseId },
+    const supplierIdRaw = payload.supplier_id != null ? String(payload.supplier_id).trim() : '';
+    const clientIdRaw = payload.clientid != null ? String(payload.clientid).trim() : '';
+    const hrEmployeeIdRaw =
+      payload.hr_employee_id != null ? String(payload.hr_employee_id).trim() : '';
+
+    let resolvedClientId = '';
+    let resolvedHrEmployeeId = '';
+    let resolvedSupplierId = '';
+
+    if (supplierIdRaw) {
+      const s = await prisma.supplier.findFirst({
+        where: { id: supplierIdRaw, warehouseId, active: true },
         select: { name: true },
       });
-      if (c) company = c.name;
+      if (s) {
+        company = s.name;
+        resolvedSupplierId = supplierIdRaw;
+      }
+    } else if (clientIdRaw) {
+      const c = await prisma.client.findFirst({
+        where: { id: clientIdRaw, deletedAt: null, warehouseId },
+        select: { name: true },
+      });
+      if (c) {
+        company = c.name;
+        resolvedClientId = clientIdRaw;
+      }
+    } else if (hrEmployeeIdRaw) {
+      const name = await resolveHrEmployeeName(warehouseId, hrEmployeeIdRaw);
+      if (name) {
+        company = name;
+        resolvedHrEmployeeId = hrEmployeeIdRaw;
+      }
+    } else {
+      const prevSid = typeof prevMeta.supplier_id === 'string' ? prevMeta.supplier_id.trim() : '';
+      const prevCid = typeof prevMeta.clientid === 'string' ? prevMeta.clientid.trim() : '';
+      const prevHe =
+        typeof prevMeta.hr_employee_id === 'string' ? prevMeta.hr_employee_id.trim() : '';
+      if (prevSid) {
+        resolvedSupplierId = prevSid;
+        const s = await prisma.supplier.findFirst({
+          where: { id: prevSid, warehouseId, active: true },
+          select: { name: true },
+        });
+        if (s) company = s.name;
+      } else if (prevCid) {
+        resolvedClientId = prevCid;
+        const c = await prisma.client.findFirst({
+          where: { id: prevCid, deletedAt: null, warehouseId },
+          select: { name: true },
+        });
+        if (c) company = c.name;
+      } else if (prevHe) {
+        resolvedHrEmployeeId = prevHe;
+        const name = await resolveHrEmployeeName(warehouseId, prevHe);
+        if (name) company = name;
+      }
     }
 
     const parcelas = Array.isArray(payload.parcelas_fiscais) ? payload.parcelas_fiscais : [];
@@ -597,15 +724,20 @@ router.post(
         ? String(payload.expense_identifier).trim()
         : null;
 
-    const prevMeta =
-      existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
-        ? (existing.metadata as Record<string, unknown>)
-        : {};
     const totalParcelas = parcelas.length > 0 ? parcelas.length : 1;
     const metadata = {
       ...prevMeta,
       expense_name: String(payload.expense_name ?? prevMeta.expense_name ?? existing.company),
-      clientid: clientId || null,
+      clientid: resolvedClientId || null,
+      hr_employee_id: resolvedHrEmployeeId || null,
+      supplier_id: resolvedSupplierId || null,
+      favorecido_kind: resolvedSupplierId
+        ? 'supplier'
+        : resolvedClientId
+          ? 'client'
+          : resolvedHrEmployeeId
+            ? 'employee'
+            : null,
       parcelas_fiscais: parcelas.length ? parcelas : prevMeta.parcelas_fiscais ?? [],
       total_parcelas: totalParcelas,
       valor_ac:
@@ -666,10 +798,7 @@ router.post(
     }
     assertWarehouseAccess(req.user, body.warehouse_id ?? t.warehouseId);
     const meta = t.metadata as Record<string, unknown> | null;
-    const clientName = await resolveClientName(
-      t.warehouseId,
-      meta && typeof meta.clientid === 'string' ? meta.clientid : null
-    );
+    const clientName = await resolveFavorecidoDisplayName(t.warehouseId, meta);
     const edit = buildExpenseEditResponse(t, clientName);
     res.json({ status: true, installments: edit.expense.installments ?? [] });
   })

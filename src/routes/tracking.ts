@@ -426,7 +426,7 @@ router.get('/events', authMiddleware, async (req, res, next) => {
     if (typeof eventModel?.findMany !== 'function') {
       return res.json([]);
     }
-    const limit = Math.min(Number(req.query.limit) || 200, 500);
+    const limit = Math.min(Number(req.query.limit) || 200, 5000);
     const events = await eventModel.findMany({
       orderBy: { createdAt: 'desc' },
       take: limit,
