@@ -1,108 +1,113 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
-import { config } from './config.js';
-import { errorHandler } from './middleware/errorHandler.js';
-import authRoutes from './routes/auth.js';
-import warehouseRoutes from './routes/warehouse.js';
-import clientRoutes from './routes/client.js';
-import usersRoutes from './routes/users.js';
-import rolesRoutes from './routes/roles.js';
-import proprietariosRoutes from './routes/proprietarios.js';
-import ownerPortalRoutes from './routes/owner-portal.js';
-import sectionsRoutes from './routes/sections.js';
-import tagsRoutes from './routes/tags.js';
-import propertiesPublicRoutes from './routes/properties-public.js';
-import propriedadesRoutes from './routes/propriedades.js';
-import siteConfigRoutes from './routes/site-config.js';
-import blogRoutes from './routes/blog.js';
-import analyticsRoutes from './routes/analytics.js';
-import trackingRoutes from './routes/tracking.js';
-import automationsRoutes from './routes/automations.js';
-import foldersRoutes from './routes/folders.js';
-import filesRoutes from './routes/files.js';
-import fileStorageRoutes from './routes/file-storage.js';
-import integrationsRoutes from './routes/integrations.js';
-import mailRoutes from './routes/mail.js';
-import helpdeskRoutes from './routes/helpdesk.js';
-import settingsRoutes from './routes/settings.js';
-import leadsRoutes from './routes/leads.js';
-import hrRoutes from './routes/hr.js';
-import siteStoriesRoutes from './routes/site-stories.js';
-import publicFeedRoutes from './routes/public-feed.js';
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { config } from "./config.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+import authRoutes from "./routes/auth.js";
+import warehouseRoutes from "./routes/warehouse.js";
+import clientRoutes from "./routes/client.js";
+import usersRoutes from "./routes/users.js";
+import rolesRoutes from "./routes/roles.js";
+import proprietariosRoutes from "./routes/proprietarios.js";
+import ownerPortalRoutes from "./routes/owner-portal.js";
+import sectionsRoutes from "./routes/sections.js";
+import tagsRoutes from "./routes/tags.js";
+import propertyTypesRoutes from "./routes/property-types.js";
+import propertiesPublicRoutes from "./routes/properties-public.js";
+import propriedadesRoutes from "./routes/propriedades.js";
+import siteConfigRoutes from "./routes/site-config.js";
+import blogRoutes from "./routes/blog.js";
+import analyticsRoutes from "./routes/analytics.js";
+import trackingRoutes from "./routes/tracking.js";
+import automationsRoutes from "./routes/automations.js";
+import foldersRoutes from "./routes/folders.js";
+import filesRoutes from "./routes/files.js";
+import fileStorageRoutes from "./routes/file-storage.js";
+import integrationsRoutes from "./routes/integrations.js";
+import mailRoutes from "./routes/mail.js";
+import helpdeskRoutes from "./routes/helpdesk.js";
+import settingsRoutes from "./routes/settings.js";
+import leadsRoutes from "./routes/leads.js";
+import hrRoutes from "./routes/hr.js";
+import siteStoriesRoutes from "./routes/site-stories.js";
+import publicFeedRoutes from "./routes/public-feed.js";
 
 const app = express();
 
 // Permite <img src="http://api:4000/uploads/..."> a partir do front em outra origem (dev: portas diferentes).
 app.use(
   helmet({
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-  })
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
 );
 app.use(
   cors({
     origin: config.corsOrigin,
     credentials: true,
-  })
+  }),
 );
 app.use(express.json());
 
 // Confia no primeiro proxy reverso (nginx/traefik) para leitura correta do IP real
-app.set('trust proxy', 1);
+app.set("trust proxy", 1);
 
 // Rate limit: em dev mais alto para não travar; em produção protege o servidor
-const isDev = config.nodeEnv === 'development';
+const isDev = config.nodeEnv === "development";
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
     max: isDev ? 2000 : 500,
-    message: { success: false, message: 'Muitas requisições. Tente novamente em alguns minutos.' },
+    message: {
+      success: false,
+      message: "Muitas requisições. Tente novamente em alguns minutos.",
+    },
     standardHeaders: true,
     legacyHeaders: false,
-  })
+  }),
 );
 
 // Rotas públicas (login e listagem de lojas para o select no login)
-app.use('/api/auth', authRoutes);
-app.use('/api/warehouse', warehouseRoutes);
-app.use('/api/client', clientRoutes);
-app.use('/api/users', usersRoutes);
-app.use('/api/roles', rolesRoutes);
-app.use('/api/proprietarios/portal', ownerPortalRoutes);
-app.use('/api/proprietarios', proprietariosRoutes);
-app.use('/api/sections', sectionsRoutes);
-app.use('/api/tags', tagsRoutes);
-app.use('/api/public/feed', publicFeedRoutes);
-app.use('/api/properties', propertiesPublicRoutes);
-app.use('/api/propriedades', propriedadesRoutes);
-app.use('/api/site-config', siteConfigRoutes);
-app.use('/api/site-stories', siteStoriesRoutes);
-app.use('/api/blog', blogRoutes);
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/tracking', trackingRoutes);
-app.use('/api/automations', automationsRoutes);
-app.use('/api/folders', foldersRoutes);
-app.use('/api/files', filesRoutes);
-app.use('/api/file_storage', fileStorageRoutes);
-app.use('/api/integrations', integrationsRoutes);
-app.use('/api/mail', mailRoutes);
-app.use('/api/helpdesk', helpdeskRoutes);
-app.use('/api/settings', settingsRoutes);
-app.use('/api/leads', leadsRoutes);
-app.use('/api/hr', hrRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/warehouse", warehouseRoutes);
+app.use("/api/client", clientRoutes);
+app.use("/api/users", usersRoutes);
+app.use("/api/roles", rolesRoutes);
+app.use("/api/proprietarios/portal", ownerPortalRoutes);
+app.use("/api/proprietarios", proprietariosRoutes);
+app.use("/api/sections", sectionsRoutes);
+app.use("/api/tags", tagsRoutes);
+app.use("/api/property-types", propertyTypesRoutes);
+app.use("/api/public/feed", publicFeedRoutes);
+app.use("/api/properties", propertiesPublicRoutes);
+app.use("/api/propriedades", propriedadesRoutes);
+app.use("/api/site-config", siteConfigRoutes);
+app.use("/api/site-stories", siteStoriesRoutes);
+app.use("/api/blog", blogRoutes);
+app.use("/api/analytics", analyticsRoutes);
+app.use("/api/tracking", trackingRoutes);
+app.use("/api/automations", automationsRoutes);
+app.use("/api/folders", foldersRoutes);
+app.use("/api/files", filesRoutes);
+app.use("/api/file_storage", fileStorageRoutes);
+app.use("/api/integrations", integrationsRoutes);
+app.use("/api/mail", mailRoutes);
+app.use("/api/helpdesk", helpdeskRoutes);
+app.use("/api/settings", settingsRoutes);
+app.use("/api/leads", leadsRoutes);
+app.use("/api/hr", hrRoutes);
 
 /** Stub: Meta Lead Ads → crm_leads (configurar verify token + Graph API em fase seguinte). */
-app.post('/api/webhooks/meta-leads', (_req, res) => {
+app.post("/api/webhooks/meta-leads", (_req, res) => {
   res.status(501).json({
     ok: false,
     message:
-      'Webhook Meta Lead Ads em preparação. Configure o app no Meta, token de verificação e mapeamento de formulários para crm_leads.',
+      "Webhook Meta Lead Ads em preparação. Configure o app no Meta, token de verificação e mapeamento de formulários para crm_leads.",
   });
 });
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'sax-backend' });
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, service: "sax-backend" });
 });
 
 app.use(errorHandler);
