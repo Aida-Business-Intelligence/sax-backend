@@ -10,69 +10,69 @@ datasource db {
 
 model Role {
   id          String   @id @default(cuid())
-  name        String   // admin, caixa, gerente, etc.
-  permissions String?  // JSON array de permissões
+  name        String // admin, caixa, gerente, etc.
+  permissions String? // JSON array de permissões
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   users       User[]
 }
 
 model User {
-  id          String    @id @default(cuid())
-  email       String    @unique
+  id          String     @id @default(cuid())
+  email       String     @unique
   password    String
   name        String?
   phone       String?
-  active      Boolean   @default(true)
+  active      Boolean    @default(true)
   roleId      String
-  role        Role      @relation(fields: [roleId], references: [id])
+  role        Role       @relation(fields: [roleId], references: [id])
   warehouseId String?
   warehouse   Warehouse? @relation(fields: [warehouseId], references: [id])
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
-  helpDeskAssignedTickets HelpDeskTicket[] @relation("HelpDeskAssigned")
-  helpDeskCreatedTickets  HelpDeskTicket[] @relation("HelpDeskCreatedBy")
-  helpDeskMessages        HelpDeskMessage[] @relation("HelpDeskMsgUser")
-  crmLeadsAssigned        CrmLead[]        @relation("CrmLeadAssignee")
+  helpDeskAssignedTickets HelpDeskTicket[]     @relation("HelpDeskAssigned")
+  helpDeskCreatedTickets  HelpDeskTicket[]     @relation("HelpDeskCreatedBy")
+  helpDeskMessages        HelpDeskMessage[]    @relation("HelpDeskMsgUser")
+  crmLeadsAssigned        CrmLead[]            @relation("CrmLeadAssignee")
   crmLeadInteractions     CrmLeadInteraction[] @relation("CrmLeadInteractionAuthor")
   hrEmployee              HrEmployee?
-  siteStoriesCreated      SiteStory[] @relation("SiteStoryAuthor")
+  siteStoriesCreated      SiteStory[]          @relation("SiteStoryAuthor")
 }
 
 model Warehouse {
-  id            String    @id @default(cuid())
-  warehouseCode String    // código da loja (ex: 001)
-  warehouseName String    // nome fantasia
-  razaoSocial   String?   // razão social
-  type          String?   // tipo (ex: matriz, filial)
-  telefone      String?
-  email         String?
-  cidade        String?
-  estado        String?
-  cep           String?
-  address       String?   // logradouro / endereço
-  numero        String?
-  complemento   String?
-  bairro        String?
-  cnpj          String?
-  ie            String?   // inscrição estadual
-  im            String?   // inscrição municipal
-  cnae          String?
-  ibgeUfId      String?   @map("ibge_uf_id")
-  ibgeMunicipioId String? @map("ibge_municipio_id")
-  note          String?   // observações
-  display       Boolean   @default(true) // ativo/inativo
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  users         User[]
-  clients       Client[]
-  proprietarios Proprietario[]
-  properties    Property[]
+  id              String           @id @default(cuid())
+  warehouseCode   String // código da loja (ex: 001)
+  warehouseName   String // nome fantasia
+  razaoSocial     String? // razão social
+  type            String? // tipo (ex: matriz, filial)
+  telefone        String?
+  email           String?
+  cidade          String?
+  estado          String?
+  cep             String?
+  address         String? // logradouro / endereço
+  numero          String?
+  complemento     String?
+  bairro          String?
+  cnpj            String?
+  ie              String? // inscrição estadual
+  im              String? // inscrição municipal
+  cnae            String?
+  ibgeUfId        String?          @map("ibge_uf_id")
+  ibgeMunicipioId String?          @map("ibge_municipio_id")
+  note            String? // observações
+  display         Boolean          @default(true) // ativo/inativo
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  users           User[]
+  clients         Client[]
+  proprietarios   Proprietario[]
+  properties      Property[]
   helpDeskTickets HelpDeskTicket[]
-  crmLeads      CrmLead[]
-  hrEmployees   HrEmployee[]
-  siteStories   SiteStory[]
+  crmLeads        CrmLead[]
+  hrEmployees     HrEmployee[]
+  siteStories     SiteStory[]
 }
 
 /// Colaborador (RH): ficha de pessoa física; opcionalmente vinculado a um User (credencial do sistema).
@@ -112,144 +112,153 @@ model HrEmployee {
 // ----------------------------------------------------------------------
 
 model Client {
-  id                    String    @id @default(cuid())
-  name                  String
-  email                 String?
-  phone                 String?
-  document              String?
-  documentType          String?
-  birthDate             DateTime?
-  gender                String?
-  warehouseId           String?
-  zip                   String?
-  address               String?   // rua / billing_street
-  addressNumber         String?
-  complement            String?
-  neighborhood          String?
-  city                  String?
-  state                 String?
-  note                  String?
-  marketingConsent      Boolean?  @default(false)
+  id                      String     @id @default(cuid())
+  name                    String
+  email                   String?
+  phone                   String?
+  document                String?
+  documentType            String?
+  birthDate               DateTime?
+  gender                  String?
+  warehouseId             String?
+  zip                     String?
+  address                 String? // rua / billing_street
+  addressNumber           String?
+  complement              String?
+  neighborhood            String?
+  city                    String?
+  state                   String?
+  note                    String?
+  marketingConsent        Boolean?   @default(false)
   communicationPreference String?
-  warehouse             Warehouse? @relation(fields: [warehouseId], references: [id])
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  properties            Property[]
+  warehouse               Warehouse? @relation(fields: [warehouseId], references: [id])
+  createdAt               DateTime   @default(now())
+  updatedAt               DateTime   @updatedAt
+  properties              Property[]
 }
 
 model Proprietario {
-  id              String    @id @default(cuid())
-  nome            String
-  email           String?
-  telefone        String?
-  tipo_documento  String?
-  cpf_cnpj        String?
-  cep             String?
-  endereco        String?
-  numero          String?
-  complemento     String?
-  bairro          String?
-  cidade          String?
-  estado          String?
-  observacoes     String?
-  warehouse_id    String
-  status          String    @default("pending")
-  origem          String    @default("erp")
-  subdomain       String?   @unique
-  access_email    String?
-  password_hash   String?
+  id                       String           @id @default(cuid())
+  nome                     String
+  email                    String?
+  telefone                 String?
+  tipo_documento           String?
+  cpf_cnpj                 String?
+  cep                      String?
+  endereco                 String?
+  numero                   String?
+  complemento              String?
+  bairro                   String?
+  cidade                   String?
+  estado                   String?
+  observacoes              String?
+  warehouse_id             String
+  status                   String           @default("pending")
+  origem                   String           @default("erp")
+  subdomain                String?          @unique
+  access_email             String?
+  password_hash            String?
   // Última senha provisória definida pelo PDV (exibir na edição; login usa password_hash).
-  lastProvisionalPassword String? @map("last_provisional_password")
-  credentialNotifyEmail        String? @map("credential_notify_email")
-  credentialNotifyWhatsapp     String? @map("credential_notify_whatsapp")
-  credentialPortalBaseUrl      String? @map("credential_portal_base_url")
-  must_change_password Boolean @default(false)
-  approvedAt      DateTime?
-  rejectedAt      DateTime?
+  lastProvisionalPassword  String?          @map("last_provisional_password")
+  credentialNotifyEmail    String?          @map("credential_notify_email")
+  credentialNotifyWhatsapp String?          @map("credential_notify_whatsapp")
+  credentialPortalBaseUrl  String?          @map("credential_portal_base_url")
+  must_change_password     Boolean          @default(false)
+  approvedAt               DateTime?
+  rejectedAt               DateTime?
   /// JSON: preferências de privacidade do portal (ex.: { marketingEmail: true })
-  privacyJson     String?   @map("privacy_json")
+  privacyJson              String?          @map("privacy_json")
   /// URL relativa da foto de perfil (ex.: /uploads/proprietarios/avatars/...)
-  fotoUrl         String?   @map("foto_url")
-  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id])
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  helpDeskTickets HelpDeskTicket[]
+  fotoUrl                  String?          @map("foto_url")
+  warehouse                Warehouse        @relation(fields: [warehouse_id], references: [id])
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+  helpDeskTickets          HelpDeskTicket[]
 }
 
 model Tag {
-  id        String       @id @default(cuid())
-  name      String       // ex: Frente Mar, Luxo, Lançamento
-  slug      String       @unique
-  active    Boolean      @default(true)
-  sortOrder Int          @default(0)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  id         String        @id @default(cuid())
+  name       String // ex: Frente Mar, Luxo, Lançamento
+  slug       String        @unique
+  active     Boolean       @default(true)
+  sortOrder  Int           @default(0)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
   properties PropertyTag[]
+}
+
+model PropertyType {
+  id        String   @id @default(cuid())
+  name      String // label visual, ex: Galpao
+  value     String   @unique // slug gerado a partir do name, ex: galpao
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Seção do site (ex: bloco "Frente Mar" na home). Imóveis são vinculados no cadastro do imóvel (campo "Exibir nas seções").
 model Section {
-  id        String   @id @default(cuid())
-  title     String   // título exibido no site (ex: Frente Mar)
-  slug      String   @unique
-  sortOrder Int      @default(0)
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String            @id @default(cuid())
+  title      String // título exibido no site (ex: Frente Mar)
+  slug       String            @unique
+  sortOrder  Int               @default(0)
+  active     Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
   properties PropertySection[]
 }
 
 model Property {
-  id           String   @id @default(cuid())
-  ref          String?  // Referência automática ex: REF-00001 (gerada no create)
-  slug         String   @unique
-  title        String
-  description  String?
-  type         String   // venda, aluguel (primeiro tipo)
-  transactionTypes String? // JSON array ["venda","aluguel","crowdfunding"]
-  status       String   @default("draft") // draft, published, archived
-  propertyType String?  // casa, apartamento, terreno, etc.
-  price        Decimal? @db.Decimal(14, 2)  // legado / primeiro tipo
-  priceVenda   Decimal? @db.Decimal(14, 2)
-  priceAluguel Decimal? @db.Decimal(14, 2)
-  priceCrowdfunding Decimal? @db.Decimal(14, 2)
-  area         Decimal? @db.Decimal(10, 2)
-  bedrooms     Int?
-  suites       Int?   // quantos quartos são suítes
-  demiSuites   Int?   // quantos são demi-suítes
-  bathrooms    Int?
-  garage       Int?
-  address      String?
-  numero       String?  // número do imóvel (logradouro + número no mapa)
-  city         String?
-  neighborhood String?
-  state        String?
-  zip          String?
-  builder      String?  // Construtora
-  latitude     Decimal? @db.Decimal(10, 7)
-  longitude    Decimal? @db.Decimal(10, 7)
+  id                    String            @id @default(cuid())
+  ref                   String? // Referência automática ex: REF-00001 (gerada no create)
+  slug                  String            @unique
+  title                 String
+  description           String?
+  type                  String // venda, aluguel (primeiro tipo)
+  transactionTypes      String? // JSON array ["venda","aluguel","crowdfunding"]
+  status                String            @default("draft") // draft, published, archived
+  propertyType          String? // casa, apartamento, terreno, etc.
+  price                 Decimal?          @db.Decimal(14, 2) // legado / primeiro tipo
+  priceVenda            Decimal?          @db.Decimal(14, 2)
+  priceAluguel          Decimal?          @db.Decimal(14, 2)
+  priceCrowdfunding     Decimal?          @db.Decimal(14, 2)
+  area                  Decimal?          @db.Decimal(10, 2)
+  bedrooms              Int?
+  suites                Int? // quantos quartos são suítes
+  demiSuites            Int? // quantos são demi-suítes
+  bathrooms             Int?
+  garage                Int?
+  address               String?
+  numero                String? // número do imóvel (logradouro + número no mapa)
+  city                  String?
+  neighborhood          String?
+  state                 String?
+  zip                   String?
+  builder               String? // Construtora
+  latitude              Decimal?          @db.Decimal(10, 7)
+  longitude             Decimal?          @db.Decimal(10, 7)
   // Hash do endereço na última geocodificação (logradouro+número+bairro+cidade+UF+CEP)
-  geoAddressKey String?
-  warehouseId  String
-  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
-  clientId     String?
-  client       Client?   @relation(fields: [clientId], references: [id])
-  proprietarioId String?  // ID do módulo Proprietários
+  geoAddressKey         String?
+  warehouseId           String
+  warehouse             Warehouse         @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  clientId              String?
+  client                Client?           @relation(fields: [clientId], references: [id])
+  proprietarioId        String? // ID do módulo Proprietários
   /// null = cadastro master; pending = aguardando aprovação; approved/rejected = fluxo portal proprietário
-  ownerSubmissionStatus String? @map("owner_submission_status")
-  comodidades  String?   // JSON array ["piscina","elevador",...]
-  mobiliado    Boolean?  @default(false)
-  aceita_pets  Boolean?  @default(false)
-  aceita_permuta Boolean? @default(false)
-  em_construcao Boolean? @default(false)
-  parceria     Boolean?  @default(false)
-  dataPrevistaEntrega DateTime?
-  tagImovel    String?   // JSON array de tags
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  media        PropertyMedia[]
-  tags         PropertyTag[]
-  sections     PropertySection[]
+  ownerSubmissionStatus String?           @map("owner_submission_status")
+  comodidades           String? // JSON array ["piscina","elevador",...]
+  mobiliado             Boolean?          @default(false)
+  aceita_pets           Boolean?          @default(false)
+  aceita_permuta        Boolean?          @default(false)
+  em_construcao         Boolean?          @default(false)
+  parceria              Boolean?          @default(false)
+  dataPrevistaEntrega   DateTime?
+  tagImovel             String? // JSON array de tags
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  media                 PropertyMedia[]
+  tags                  PropertyTag[]
+  sections              PropertySection[]
 
   @@unique([warehouseId, ref], map: "Property_warehouseId_ref_key")
 }
@@ -259,6 +268,7 @@ model PropertyTag {
   property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   tagId      String
   tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
   @@id([propertyId, tagId])
 }
 
@@ -269,13 +279,14 @@ model PropertySection {
   sectionId  String
   section    Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   sortOrder  Int      @default(0)
+
   @@id([propertyId, sectionId])
 }
 
 model PropertyMedia {
   id         String   @id @default(cuid())
   url        String
-  type       String   // image, video
+  type       String // image, video
   sortOrder  Int      @default(0)
   propertyId String
   property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
@@ -283,46 +294,46 @@ model PropertyMedia {
 
 // Configuração do site público (banners, logo, favicon, menu, hero, logos parceiros). Uma única linha (singleton).
 model SiteConfig {
-  id                  String   @id @default(cuid())
-  featuredPropertyIds String?  // JSON array ["id1","id2",...] - imóveis no banner/carrossel
-  logoUrl             String?
-  faviconUrl          String?  // ícone da aba do navegador (favicon)
-  menuItems           String?  // JSON array de itens do menu (label, path, etc.)
-  heroContent         String?  // JSON: título, subtítulo, botão, exibição do mapa, etc.
-  partnerLogos        String?  // JSON array [{ url, name? }] - logos da seção Nossos Parceiros
-  aboutContent        String?  // JSON: textos e links da página Sobre nós
-  footerContent       String?  // JSON: rodapé (creci, copyright, redes sociais)
-  transactionTypes    String?  // JSON array [{ value, label }] - tipos no cadastro (Venda, Aluguel, Crowdfunding, etc.)
-  exclusiveProjectsContent String? // JSON: textos e imagens da página /projetos-exclusivos
-  imoveisContent      String?  // JSON: CTA WhatsApp na página de detalhe do imóvel, etc.
-  proprietariosContent String? // JSON: textos da página /para-proprietarios (sax-site)
+  id                         String   @id @default(cuid())
+  featuredPropertyIds        String? // JSON array ["id1","id2",...] - imóveis no banner/carrossel
+  logoUrl                    String?
+  faviconUrl                 String? // ícone da aba do navegador (favicon)
+  menuItems                  String? // JSON array de itens do menu (label, path, etc.)
+  heroContent                String? // JSON: título, subtítulo, botão, exibição do mapa, etc.
+  partnerLogos               String? // JSON array [{ url, name? }] - logos da seção Nossos Parceiros
+  aboutContent               String? // JSON: textos e links da página Sobre nós
+  footerContent              String? // JSON: rodapé (creci, copyright, redes sociais)
+  transactionTypes           String? // JSON array [{ value, label }] - tipos no cadastro (Venda, Aluguel, Crowdfunding, etc.)
+  exclusiveProjectsContent   String? // JSON: textos e imagens da página /projetos-exclusivos
+  imoveisContent             String? // JSON: CTA WhatsApp na página de detalhe do imóvel, etc.
+  proprietariosContent       String? // JSON: textos da página /para-proprietarios (sax-site)
   /// Funil "Modo Caça" no sax-site (overlay gamificado de captura).
-  huntModeEnabled     Boolean  @default(false)
+  huntModeEnabled            Boolean  @default(false)
   /// Conta Instagram Business (Graph API) — ID numérico da conta conectada ao Facebook Page.
-  instagramBusinessAccountId String? @map("instagram_business_account_id")
+  instagramBusinessAccountId String?  @map("instagram_business_account_id")
   /// Token de longa duração (armazenar com cuidado em produção).
-  instagramAccessToken       String? @map("instagram_access_token") @db.Text
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  instagramAccessToken       String?  @map("instagram_access_token") @db.Text
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 }
 
 /// Stories estilo Instagram publicadas no PDV e exibidas no sax-site (/feed).
 model SiteStory {
-  id                String    @id @default(cuid())
-  warehouseId       String?   @map("warehouse_id")
-  imageUrl          String    @map("image_url")
-  caption           String?
+  id              String    @id @default(cuid())
+  warehouseId     String?   @map("warehouse_id")
+  imageUrl        String    @map("image_url")
+  caption         String?
   /// Texto curto abaixo da bolha no /feed (ex.: construtora, bairro), estilo “nome” do Instagram.
-  bubbleLabel       String?   @map("bubble_label") @db.VarChar(80)
+  bubbleLabel     String?   @map("bubble_label") @db.VarChar(80)
   /// JSON: { textLayers?: [...], linkLayers?: [...] } — posições em % do container (0–100).
-  overlays          Json?
-  sortOrder         Int       @default(0) @map("sort_order")
-  published         Boolean   @default(true)
-  publishedAt       DateTime  @default(now()) @map("published_at")
-  expiresAt         DateTime? @map("expires_at")
-  createdByUserId   String?   @map("created_by_user_id")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  overlays        Json?
+  sortOrder       Int       @default(0) @map("sort_order")
+  published       Boolean   @default(true)
+  publishedAt     DateTime  @default(now()) @map("published_at")
+  expiresAt       DateTime? @map("expires_at")
+  createdByUserId String?   @map("created_by_user_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
   createdBy User?      @relation("SiteStoryAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
@@ -340,11 +351,11 @@ model BlogPost {
   excerpt    String
   content    String
   coverUrl   String?
-  tags       String?  // JSON array ["tag1","tag2"]
+  tags       String? // JSON array ["tag1","tag2"]
   authorName String   @default("Equipe SAX")
   published  Boolean  @default(true)
-  reactions  String?  // JSON { "likes": number }
-  comments   String?  // JSON array [{ id, authorName, message, createdAt }]
+  reactions  String? // JSON { "likes": number }
+  comments   String? // JSON array [{ id, authorName, message, createdAt }]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
@@ -357,7 +368,7 @@ model SiteVisitor {
   lastSeen    DateTime @default(now())
   ip          String?
   userAgent   String?
-  deviceType  String?   // mobile, desktop, tablet
+  deviceType  String? // mobile, desktop, tablet
   browser     String?
   os          String?
   country     String?
@@ -377,14 +388,14 @@ model SiteVisitor {
 // Leads/contatos captados no site (formulários com CPF, celular, etc.) para CRM e remarketing.
 model SiteLead {
   id        String   @id @default(cuid())
-  sessionId String?  // vincula ao SiteVisitor
+  sessionId String? // vincula ao SiteVisitor
   name      String?
   email     String?
   phone     String?
   cpf       String?
   source    String   @default("form") // form, contact, etc.
   consent   Boolean  @default(true)
-  metadata  String?  // JSON: cidade, tipo, faixa de valor, etc.
+  metadata  String? // JSON: cidade, tipo, faixa de valor, etc.
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -419,8 +430,8 @@ model CrmLead {
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @updatedAt @map("updated_at")
 
-  warehouse    Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
-  assignedUser User?      @relation("CrmLeadAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  warehouse    Warehouse?           @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  assignedUser User?                @relation("CrmLeadAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
   deals        CrmLeadDeal[]
   interactions CrmLeadInteraction[]
   tasks        CrmLeadTask[]
@@ -434,23 +445,23 @@ model CrmLead {
 }
 
 model CrmLeadDeal {
-  id                String    @id @default(cuid())
-  crmLeadId         String    @map("crm_lead_id")
-  title             String
-  value             Decimal?  @db.Decimal(14, 2)
-  currency          String    @default("BRL")
-  stage             String    @default("prospeccao")
-  expectedCloseAt   DateTime? @map("expected_close_at")
-  description       String?
-  internalNotes     String?   @map("internal_notes")
-  probability       Int?
-  transactionType   String?   @map("transaction_type")
-  propertyRef       String?   @map("property_ref")
-  responsible       String?
-  commissionPct     Decimal?  @map("commission_pct") @db.Decimal(5, 2)
-  paymentMethod     String?   @map("payment_method")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  id              String    @id @default(cuid())
+  crmLeadId       String    @map("crm_lead_id")
+  title           String
+  value           Decimal?  @db.Decimal(14, 2)
+  currency        String    @default("BRL")
+  stage           String    @default("prospeccao")
+  expectedCloseAt DateTime? @map("expected_close_at")
+  description     String?
+  internalNotes   String?   @map("internal_notes")
+  probability     Int?
+  transactionType String?   @map("transaction_type")
+  propertyRef     String?   @map("property_ref")
+  responsible     String?
+  commissionPct   Decimal?  @map("commission_pct") @db.Decimal(5, 2)
+  paymentMethod   String?   @map("payment_method")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   crmLead CrmLead @relation(fields: [crmLeadId], references: [id], onDelete: Cascade)
 
@@ -501,9 +512,9 @@ model CrmLeadTask {
 model SiteAnalyticsEvent {
   id        String   @id @default(cuid())
   sessionId String
-  eventType String   // page_view, property_view, search, time_on_page, scroll, click
+  eventType String // page_view, property_view, search, time_on_page, scroll, click
   path      String?
-  payload   String?  // JSON
+  payload   String? // JSON
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -517,14 +528,14 @@ model SiteAnalyticsEvent {
 // ----------------------------------------------------------------------
 
 model Visitor {
-  id               String   @id @default(cuid())
+  id              String   @id @default(cuid())
   /// ID estável no cliente (cookie + localStorage) para rastrear o funil mesmo se o fingerprint de sessão mudar.
-  clientVisitorId  String?  @unique @map("client_visitor_id")
-  fingerprint      String   @unique
-  ip               String?
-  userAgent        String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  clientVisitorId String?  @unique @map("client_visitor_id")
+  fingerprint     String   @unique
+  ip              String?
+  userAgent       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   sessions TrackingSession[]
   events   TrackingEvent[]
@@ -569,8 +580,8 @@ model TrackingSession {
 model TrackingEvent {
   id        String   @id @default(cuid())
   visitorId String
-  type      String   // PAGE_VIEW, VIEW_PROPERTY, CLICK_WHATSAPP, SEARCH, etc.
-  data      Json     // payload flexível
+  type      String // PAGE_VIEW, VIEW_PROPERTY, CLICK_WHATSAPP, SEARCH, etc.
+  data      Json // payload flexível
   createdAt DateTime @default(now())
 
   visitor Visitor @relation(fields: [visitorId], references: [id], onDelete: Cascade)
@@ -585,15 +596,15 @@ model TrackingEvent {
 // ----------------------------------------------------------------------
 
 model Automation {
-  id           String   @id @default(cuid())
-  name         String   // ex: "Visitou imóvel 2x → mensagem"
-  triggerType  String   // VIEW_PROPERTY_2X, CLICK_WHATSAPP
-  triggerConfig Json?   // { minViews?, withinHours?, ... }
-  actionType   String   // SEND_WHATSAPP, FOLLOW_UP
-  actionConfig Json?    // { template?, message?, ... }
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  name          String // ex: "Visitou imóvel 2x → mensagem"
+  triggerType   String // VIEW_PROPERTY_2X, CLICK_WHATSAPP
+  triggerConfig Json? // { minViews?, withinHours?, ... }
+  actionType    String // SEND_WHATSAPP, FOLLOW_UP
+  actionConfig  Json? // { template?, message?, ... }
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   queueItems AutomationQueue[]
 
@@ -604,12 +615,12 @@ model AutomationQueue {
   id            String    @id @default(cuid())
   automationId  String
   visitorId     String
-  leadId        String?   // opcional, para contexto
-  payload       Json      // contexto: slug, type, etc.
+  leadId        String? // opcional, para contexto
+  payload       Json // contexto: slug, type, etc.
   status        String    @default("pending") // pending, sent, failed
   scheduledFor  DateTime  @default(now())
   processedAt   DateTime?
-  resultPayload Json?     // resposta WhatsApp ou erro
+  resultPayload Json? // resposta WhatsApp ou erro
   createdAt     DateTime  @default(now())
 
   automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
@@ -625,15 +636,15 @@ model AutomationQueue {
 // ----------------------------------------------------------------------
 
 model FileFolder {
-  id          String      @id @default(cuid())
+  id          String   @id @default(cuid())
   name        String
-  filesCount  Int         @default(0)  // contagem de arquivos na pasta
-  size        Int         @default(0)  // tamanho total em bytes
-  isFavorite  Boolean     @default(false)
+  filesCount  Int      @default(0) // contagem de arquivos na pasta
+  size        Int      @default(0) // tamanho total em bytes
+  isFavorite  Boolean  @default(false)
   warehouseId String?
-  parentId    String?     // subpasta: pasta pai
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime   @updatedAt
+  parentId    String? // subpasta: pasta pai
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   parent   FileFolder?  @relation("Subfolders", fields: [parentId], references: [id], onDelete: Cascade)
   children FileFolder[] @relation("Subfolders")
@@ -641,29 +652,29 @@ model FileFolder {
 }
 
 model File {
-  id         String    @id @default(cuid())
+  id         String   @id @default(cuid())
   folderId   String
-  name       String    // nome original do arquivo
-  size       Int       @default(0) // bytes
-  type       String?   // mime ou extensão
-  path       String    // caminho relativo no disco (ex: uploads/files/xxx.pdf)
-  isFavorite Boolean   @default(false)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  name       String // nome original do arquivo
+  size       Int      @default(0) // bytes
+  type       String? // mime ou extensão
+  path       String // caminho relativo no disco (ex: uploads/files/xxx.pdf)
+  isFavorite Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   folder FileFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
 }
 
 // Integrações de armazenamento (Dropbox, Drive, OneDrive) por usuário
 model CloudIntegration {
-  id           String    @id @default(cuid())
+  id           String   @id @default(cuid())
   userId       String
   provider     String
   accessToken  String?
   refreshToken String?
   email        String?
-  integratedAt DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  integratedAt DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([userId, provider])
   @@index([userId])
@@ -674,27 +685,27 @@ model CloudIntegration {
 // ----------------------------------------------------------------------
 
 model HelpDeskTicket {
-  id              String   @id @default(cuid())
-  number          Int      @unique
-  protocol        String   @unique // protocolo único (ex.: SAX-…), gerado na criação
+  id              String                @id @default(cuid())
+  number          Int                   @unique
+  protocol        String                @unique // protocolo único (ex.: SAX-…), gerado na criação
   title           String
-  status          String   @default("OPEN") // OPEN | PENDING | IN_PROGRESS | RESOLVED | CLOSED
-  priority        String   @default("NORMAL") // LOW | NORMAL | HIGH | URGENT
-  queue           String   @default("geral")
+  status          String                @default("OPEN") // OPEN | PENDING | IN_PROGRESS | RESOLVED | CLOSED
+  priority        String                @default("NORMAL") // LOW | NORMAL | HIGH | URGENT
+  queue           String                @default("geral")
   proprietarioId  String
-  proprietario    Proprietario @relation(fields: [proprietarioId], references: [id], onDelete: Cascade)
+  proprietario    Proprietario          @relation(fields: [proprietarioId], references: [id], onDelete: Cascade)
   warehouseId     String?
-  warehouse       Warehouse? @relation(fields: [warehouseId], references: [id])
+  warehouse       Warehouse?            @relation(fields: [warehouseId], references: [id])
   assignedUserId  String?
-  assignedUser    User?    @relation("HelpDeskAssigned", fields: [assignedUserId], references: [id])
-  createdByStaff  Boolean  @default(false)
+  assignedUser    User?                 @relation("HelpDeskAssigned", fields: [assignedUserId], references: [id])
+  createdByStaff  Boolean               @default(false)
   createdByUserId String?
-  createdByUser   User?    @relation("HelpDeskCreatedBy", fields: [createdByUserId], references: [id])
+  createdByUser   User?                 @relation("HelpDeskCreatedBy", fields: [createdByUserId], references: [id])
   firstMessageAt  DateTime?
   lastMessageAt   DateTime?
   closedAt        DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
   messages        HelpDeskMessage[]
   events          HelpDeskTicketEvent[]
 
@@ -706,29 +717,29 @@ model HelpDeskTicket {
 }
 
 model HelpDeskMessage {
-  id            String   @id @default(cuid())
+  id            String         @id @default(cuid())
   ticketId      String
   ticket        HelpDeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   body          String
   imageUrl      String? // /uploads/helpdesk/{ticketId}/… (opcional; proprietário pode anexar imagem)
   authorType    String // owner | staff | system
   authorUserId  String?
-  authorUser    User?    @relation("HelpDeskMsgUser", fields: [authorUserId], references: [id])
+  authorUser    User?          @relation("HelpDeskMsgUser", fields: [authorUserId], references: [id])
   readByOwnerAt DateTime?
   readByStaffAt DateTime?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime       @default(now())
 
   @@index([ticketId])
 }
 
 model HelpDeskTicketEvent {
-  id          String   @id @default(cuid())
+  id          String         @id @default(cuid())
   ticketId    String
   ticket      HelpDeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   type        String // created | status_change | priority_change | assign | queue_change | message | closed
   payload     String? // JSON
   actorUserId String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime       @default(now())
 
   @@index([ticketId])
 }
@@ -738,19 +749,19 @@ model HelpDeskTicketEvent {
 // ----------------------------------------------------------------------
 
 model EmailAccount {
-  id           String   @id @default(cuid())
-  userId       String
-  email        String
-  displayName  String?  // nome exibido (ex: "Trabalho", "Pessoal")
-  provider     String   @default("imap") // imap | gmail | outlook
-  imapHost     String
-  imapPort     Int      @default(993)
-  imapSecure   Boolean  @default(true)
-  smtpHost     String?
-  smtpPort     Int?
-  credentials  String   // senha ou token encriptado
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String   @id @default(cuid())
+  userId      String
+  email       String
+  displayName String? // nome exibido (ex: "Trabalho", "Pessoal")
+  provider    String   @default("imap") // imap | gmail | outlook
+  imapHost    String
+  imapPort    Int      @default(993)
+  imapSecure  Boolean  @default(true)
+  smtpHost    String?
+  smtpPort    Int?
+  credentials String // senha ou token encriptado
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([userId])
 }
