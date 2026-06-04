@@ -29,9 +29,22 @@ import mailRoutes from "./routes/mail.js";
 import helpdeskRoutes from "./routes/helpdesk.js";
 import settingsRoutes from "./routes/settings.js";
 import leadsRoutes from "./routes/leads.js";
+import negociosRoutes from "./routes/negocios.js";
+import activitiesRoutes from "./routes/activities.js";
 import hrRoutes from "./routes/hr.js";
 import siteStoriesRoutes from "./routes/site-stories.js";
 import publicFeedRoutes from "./routes/public-feed.js";
+import liveMessagesPublicRoutes from "./routes/live-messages-public.js";
+import liveChatPublicRoutes from "./routes/live-chat-public.js";
+import receivablesRoutes from "./routes/receivables.js";
+import originsRoutes from "./routes/origins.js";
+import expensesRoutes from "./routes/expenses.js";
+import expensesCategoriesRoutes from "./routes/expenses-categories.js";
+import bankAccountsRoutes from "./routes/bank-accounts.js";
+import suppliersRoutes from "./routes/suppliers.js";
+import kanbanRoutes from "./routes/kanban.js";
+import { metaLeadsWebhookRouter } from "./routes/webhooks-meta-leads.js";
+import { googleLeadsWebhookRouter } from "./routes/webhooks-google-leads.js";
 
 const app = express();
 
@@ -47,10 +60,21 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
 
 // Confia no primeiro proxy reverso (nginx/traefik) para leitura correta do IP real
 app.set("trust proxy", 1);
+
+/** Lead Ads Meta: corpo JSON bruto (obrigatório para validar X-Hub-Signature-256). */
+app.use(
+  "/api/webhooks/meta-leads",
+  express.raw({ type: "application/json" }),
+  metaLeadsWebhookRouter,
+);
+
+app.use(express.json({ limit: "100mb" }));
+
+/** Leads Google / Zapier — JSON + header X-Sax-Webhook-Secret */
+app.use("/api/webhooks/google-leads", googleLeadsWebhookRouter);
 
 // Rate limit: em dev mais alto para não travar; em produção protege o servidor
 const isDev = config.nodeEnv === "development";
@@ -79,6 +103,8 @@ app.use("/api/sections", sectionsRoutes);
 app.use("/api/tags", tagsRoutes);
 app.use("/api/property-types", propertyTypesRoutes);
 app.use("/api/public/feed", publicFeedRoutes);
+app.use("/api/public/live-messages", liveMessagesPublicRoutes);
+app.use("/api/public/live-chat", liveChatPublicRoutes);
 app.use("/api/properties", propertiesPublicRoutes);
 app.use("/api/propriedades", propriedadesRoutes);
 app.use("/api/site-config", siteConfigRoutes);
@@ -95,16 +121,16 @@ app.use("/api/mail", mailRoutes);
 app.use("/api/helpdesk", helpdeskRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/leads", leadsRoutes);
+app.use("/api/negocios", negociosRoutes);
+app.use("/api/activities", activitiesRoutes);
 app.use("/api/hr", hrRoutes);
-
-/** Stub: Meta Lead Ads → crm_leads (configurar verify token + Graph API em fase seguinte). */
-app.post("/api/webhooks/meta-leads", (_req, res) => {
-  res.status(501).json({
-    ok: false,
-    message:
-      "Webhook Meta Lead Ads em preparação. Configure o app no Meta, token de verificação e mapeamento de formulários para crm_leads.",
-  });
-});
+app.use("/api/receivables", receivablesRoutes);
+app.use("/api/origins", originsRoutes);
+app.use("/api/expenses", expensesRoutes);
+app.use("/api/expenses_categories", expensesCategoriesRoutes);
+app.use("/api/BankAccounts", bankAccountsRoutes);
+app.use("/api/suppliers", suppliersRoutes);
+app.use("/api/kanban", kanbanRoutes);
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "sax-backend" });

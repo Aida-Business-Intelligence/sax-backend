@@ -1,55 +1,79 @@
 import multer from 'multer';
 import { Router, Request, Response } from 'express';
+import { prisma } from '../lib/prisma.js';
+import {
+  getWarehousePdvSettings,
+  mergeWarehousePdvSettings,
+} from '../lib/pdv-warehouse-settings.js';
 import { uploadPublic, keys } from '../lib/storage.js';
 import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
 
 const router = Router();
 
 /**
- * Config por warehouse em memória (reinício do servidor perde os dados).
- * Substituir por persistência em banco quando existir modelo adequado.
- */
-const warehouseConfigById = new Map<string, Record<string, unknown>>();
-
-/**
  * GET /api/settings/options — legado do template PDV (listas de opções por categoria).
- * sax-backend não persiste isso ainda; resposta vazia evita 404 no dashboard (blog, etc.).
  */
 router.get('/options', (_req: Request, res: Response) => {
   res.json([]);
 });
 
 /**
- * GET /api/settings/config — legado do template (config por warehouse).
- * Com ?warehouse_id= devolve chaves salvas via POST /update_config (ex.: helpdesk_webrtc_settings).
+ * GET /api/settings/config — config por warehouse (Prisma).
+ * Inclui integrations_settings, helpdesk_webrtc_settings, etc. (merge via POST update_config).
  */
-router.get('/config', (req: Request, res: Response) => {
+router.get('/config', async (req: Request, res: Response) => {
   const warehouseId =
-    typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : undefined;
+    typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id.trim() : '';
   if (!warehouseId) {
     res.json({});
     return;
   }
-  res.json(warehouseConfigById.get(warehouseId) ?? {});
+  try {
+    const row = await prisma.warehouse.findUnique({
+      where: { id: warehouseId },
+      select: { id: true },
+    });
+    if (!row) {
+      res.status(404).json({ message: 'Loja não encontrada' });
+      return;
+    }
+    const cfg = await getWarehousePdvSettings(warehouseId);
+    res.json(cfg);
+  } catch (e) {
+    console.error('[settings/config GET]', e);
+    res.status(500).json({ message: 'Erro ao carregar configurações' });
+  }
 });
 
 /**
- * POST /api/settings/update_config — legado do PDV (merge de chaves por warehouse).
+ * POST /api/settings/update_config — merge de chaves por warehouse (persistido em Warehouse.pdvSettingsJson).
  */
-router.post('/update_config', (req: Request, res: Response) => {
+router.post('/update_config', async (req: Request, res: Response) => {
   const warehouseId = req.body?.warehouse_id as string | undefined;
   if (!warehouseId || typeof warehouseId !== 'string') {
     res.status(400).json({ message: 'warehouse_id é obrigatório' });
     return;
   }
-  const prev = warehouseConfigById.get(warehouseId) ?? {};
-  const next: Record<string, unknown> = { ...prev };
-  for (const [k, v] of Object.entries(req.body ?? {})) {
-    if (k === 'warehouse_id') continue;
-    if (v !== undefined) next[k] = v;
+  try {
+    const row = await prisma.warehouse.findUnique({
+      where: { id: warehouseId.trim() },
+      select: { id: true },
+    });
+    if (!row) {
+      res.status(404).json({ message: 'Loja não encontrada' });
+      return;
+    }
+    const patch: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(req.body ?? {})) {
+      if (k === 'warehouse_id') continue;
+      if (v !== undefined) patch[k] = v;
+    }
+    await mergeWarehousePdvSettings(warehouseId.trim(), patch);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[settings/update_config]', e);
+    res.status(500).json({ message: 'Erro ao salvar configurações' });
   }
-  warehouseConfigById.set(warehouseId, next);
-  res.json({ ok: true });
 });
 
 const settingsImageUpload = multer({
@@ -62,8 +86,6 @@ const settingsImageUpload = multer({
 
 /**
  * PUT /api/settings/upload/:type/:warehouseId
- * Recebe multipart/form-data com campo "file" (logo ou icon).
- * type: 'logo' | 'icon'
  */
 router.put(
   '/upload/:type/:warehouseId',

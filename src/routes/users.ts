@@ -1,13 +1,28 @@
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
+import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { uploadPublic, deleteObject, keyFromCdnUrl, keys } from '../lib/storage.js';
+import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
 
 const router = Router();
+
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: SIZE.AVATAR },
+  fileFilter: (_req, file, cb) => {
+    cb(null, file.mimetype.startsWith('image/'));
+  },
+});
 
 /**
  * POST /api/users/list
  * Lista usuários para o PDV (admin > Usuários).
- * Body: { page, pageSize, sortField, sortOrder, search?, type? }
+ * Body: { page, pageSize, sortField, sortOrder, search?, warehouse_id? }
+ * Com `warehouse_id`, filtra usuários ativos dessa loja (para atribuir leads / colaboradores).
  * Resposta: { data: [...], total } no formato esperado pelo front (staffid, firstname, lastname, email, phonenumber, datecreated, role_name).
  */
 const listHandler = async (req: Request, res: Response) => {
@@ -18,12 +33,14 @@ const listHandler = async (req: Request, res: Response) => {
       sortField = 'createdAt',
       sortOrder = 'DESC',
       search = '',
+      warehouse_id: warehouseIdBody,
     } = req.body as {
       page?: number;
       pageSize?: number;
       sortField?: string;
       sortOrder?: string;
       search?: string;
+      warehouse_id?: string;
     };
 
     const skip = Math.max(0, (Number(page) || 1) - 1) * Math.max(1, Math.min(100, Number(pageSize) || 10));
@@ -34,14 +51,22 @@ const listHandler = async (req: Request, res: Response) => {
       ? { [orderByField]: sortOrder?.toUpperCase() === 'ASC' ? 'asc' : 'desc' }
       : orderByField;
 
-    const where = search && String(search).trim()
-      ? {
-          OR: [
-            { email: { contains: String(search).trim(), mode: 'insensitive' as const } },
-            { name: { contains: String(search).trim(), mode: 'insensitive' as const } },
-          ],
-        }
-      : {};
+    const wh = warehouseIdBody?.trim();
+    const clauses: Prisma.UserWhereInput[] = [];
+    if (search && String(search).trim()) {
+      const q = String(search).trim();
+      clauses.push({
+        OR: [
+          { email: { contains: q, mode: 'insensitive' } },
+          { name: { contains: q, mode: 'insensitive' } },
+        ],
+      });
+    }
+    if (wh) {
+      clauses.push({ warehouseId: wh });
+      clauses.push({ active: true });
+    }
+    const where: Prisma.UserWhereInput = clauses.length > 0 ? { AND: clauses } : {};
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -63,9 +88,11 @@ const listHandler = async (req: Request, res: Response) => {
         firstname,
         lastname,
         email: u.email,
-        phonenumber: (u as { phone?: string | null }).phone ?? null,
+        phonenumber: u.phone ?? null,
+        avatarUrl: u.avatarUrl ?? null,
         datecreated: u.createdAt,
         role_name: u.role?.name ?? '',
+        role_id: u.roleId,
       };
     });
 
@@ -191,7 +218,9 @@ async function getById(req: Request, res: Response) {
       firstname,
       lastname,
       email: u.email,
-      phonenumber: (u as { phone?: string | null }).phone ?? null,
+      phonenumber: u.phone ?? null,
+      avatarUrl: u.avatarUrl ?? null,
+      profile_extra: u.profileExtra ?? null,
       role: u.roleId,
       role_name: u.role?.name ?? '',
       warehouse: u.warehouseId ? [u.warehouseId] : [],
@@ -237,6 +266,8 @@ async function update(req: Request, res: Response) {
       admin?: string;
       active?: boolean;
       phonenumber?: string;
+      avatarUrl?: string | null;
+      profile_extra?: unknown;
     };
     if (!id) {
       res.status(400).json({ message: 'ID do usuário é obrigatório' });
@@ -252,13 +283,32 @@ async function update(req: Request, res: Response) {
     const warehouseId = rawWarehouse && rawWarehouse.length > 0 ? rawWarehouse : (existing.warehouseId ?? null);
     const roleId = b.role && String(b.role).trim().length > 0 ? String(b.role).trim() : undefined;
 
-    const data: { name?: string; email?: string; roleId?: string; warehouseId?: string | null; password?: string; active?: boolean; phone?: string | null } = {
+    const data: {
+      name?: string;
+      email?: string;
+      roleId?: string;
+      warehouseId?: string | null;
+      password?: string;
+      active?: boolean;
+      phone?: string | null;
+      avatarUrl?: string | null;
+      profileExtra?: Prisma.InputJsonValue | typeof Prisma.JsonNull;
+    } = {
       name: name || undefined,
       email: (b.email && String(b.email).trim()) || undefined,
       ...(roleId && { roleId }),
       warehouseId: warehouseId ?? null,
       ...(typeof b.active === 'boolean' && { active: b.active }),
       phone: b.phonenumber !== undefined ? (b.phonenumber ? String(b.phonenumber).trim() : null) : undefined,
+      ...(b.avatarUrl !== undefined && {
+        avatarUrl: b.avatarUrl && String(b.avatarUrl).trim() ? String(b.avatarUrl).trim() : null,
+      }),
+      ...(b.profile_extra !== undefined && {
+        profileExtra:
+          b.profile_extra === null
+            ? Prisma.JsonNull
+            : (b.profile_extra as Prisma.InputJsonValue),
+      }),
     };
     if (b.password && String(b.password).trim().length >= 6) {
       data.password = await bcrypt.hash(String(b.password).trim(), 10);
@@ -296,6 +346,85 @@ async function update(req: Request, res: Response) {
 
 router.post('/update/:id', update);
 router.post('/update/:id/', update);
+
+type AuthedRequest = Request & { user: { id: string; password: string; avatarUrl: string | null } };
+
+/**
+ * POST /api/users/change-password
+ * Troca a senha do usuário logado (valida senha atual). Requer Bearer JWT.
+ */
+async function changePassword(req: Request, res: Response) {
+  try {
+    const authed = (req as AuthedRequest).user;
+    const body = (req.body || {}) as { oldPassword?: string; newPassword?: string };
+    const oldPassword = body.oldPassword ? String(body.oldPassword) : '';
+    const newPassword = body.newPassword ? String(body.newPassword) : '';
+    if (!oldPassword || !newPassword) {
+      res.status(400).json({ message: 'Informe a senha atual e a nova senha' });
+      return;
+    }
+    if (newPassword.length < 6) {
+      res.status(400).json({ message: 'A nova senha deve ter pelo menos 6 caracteres' });
+      return;
+    }
+    const ok = await bcrypt.compare(oldPassword, authed.password);
+    if (!ok) {
+      res.status(400).json({ message: 'Senha atual incorreta' });
+      return;
+    }
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: authed.id },
+      data: { password: hashed },
+    });
+    res.json({ status: true, message: 'Senha alterada com sucesso' });
+  } catch (e) {
+    console.error('users change-password error', e);
+    res.status(500).json({ message: 'Erro ao alterar senha' });
+  }
+}
+
+router.post('/change-password', authMiddleware, changePassword);
+router.post('/change-password/', authMiddleware, changePassword);
+
+/**
+ * POST /api/users/upload-avatar
+ * Envia foto de perfil (multipart campo "file"), grava em CDN e atualiza User.avatarUrl. Requer JWT.
+ */
+async function uploadAvatar(req: Request, res: Response) {
+  try {
+    const authed = (req as AuthedRequest).user;
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    if (!file) {
+      res.status(400).json({ message: 'Envie a imagem no campo "file"' });
+      return;
+    }
+    const validation = validateImage(file.buffer, SIZE.AVATAR);
+    if (!validation.ok) {
+      res.status(422).json({ message: validation.error });
+      return;
+    }
+    const prev = authed.avatarUrl;
+    if (prev) {
+      const prevKey = keyFromCdnUrl(prev);
+      if (prevKey) await deleteObject(prevKey);
+    }
+    const ext = safeExtFromMime(validation.mime!);
+    const objectKey = keys.avatar(`${authed.id}-${randomUUID()}${ext}`);
+    const url = await uploadPublic(objectKey, file.buffer, validation.mime!);
+    await prisma.user.update({
+      where: { id: authed.id },
+      data: { avatarUrl: url },
+    });
+    res.json({ status: true, url, avatarUrl: url });
+  } catch (e) {
+    console.error('users upload-avatar error', e);
+    res.status(500).json({ message: 'Erro ao enviar foto' });
+  }
+}
+
+router.post('/upload-avatar', authMiddleware, avatarUpload.single('file'), uploadAvatar);
+router.post('/upload-avatar/', authMiddleware, avatarUpload.single('file'), uploadAvatar);
 
 /**
  * POST /api/users/deactivate

@@ -23,7 +23,11 @@ model User {
   password    String
   name        String?
   phone       String?
-  active      Boolean    @default(true)
+  /// URL pública da foto (CDN); mesmo registro exibido no PDV /account e no admin.
+  avatarUrl   String?   @map("avatar_url")
+  /// Dados extras do perfil PDV (endereço, sobre, etc.) — não duplicados na tabela admin.
+  profileExtra Json?    @map("profile_extra")
+  active      Boolean   @default(true)
   roleId      String
   role        Role       @relation(fields: [roleId], references: [id])
   warehouseId String?
@@ -37,42 +41,124 @@ model User {
   crmLeadsAssigned        CrmLead[]            @relation("CrmLeadAssignee")
   crmLeadInteractions     CrmLeadInteraction[] @relation("CrmLeadInteractionAuthor")
   hrEmployee              HrEmployee?
-  siteStoriesCreated      SiteStory[]          @relation("SiteStoryAuthor")
+  siteStoriesCreated      SiteStory[] @relation("SiteStoryAuthor")
+  kanbanWorkspacesCreated KanbanWorkspace[] @relation("KanbanWorkspaceCreatedBy")
+  kanbanWorkspaceMembers  KanbanWorkspaceMember[]
+}
+
+/// Espaço de trabalho (estilo Jira): cada um tem quadro Kanban e equipa próprios.
+model KanbanWorkspace {
+  id          String   @id @default(cuid())
+  name        String
+  /// Chave curta opcional exibida junto ao nome (ex.: NEG, WEB).
+  key         String?  @db.VarChar(16)
+  createdById String   @map("created_by_id")
+  createdBy   User     @relation("KanbanWorkspaceCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  warehouseId String? @map("warehouse_id")
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  board       KanbanBoard?
+  members     KanbanWorkspaceMember[]
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("kanban_workspaces")
+}
+
+model KanbanWorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String   @map("workspace_id")
+  workspace   KanbanWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String   @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// admin | member — admins podem renomear espaço e gerir equipa.
+  role        String   @default("member")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([workspaceId, userId])
+  @@map("kanban_workspace_members")
+}
+
+/// Quadro Kanban: um por espaço de trabalho (estado JSON { columns, tasks, meta }).
+model KanbanBoard {
+  id          String   @id @default(cuid())
+  workspaceId String   @unique @map("workspace_id")
+  workspace   KanbanWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stateJson   String   @default("{}") @map("state_json") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("kanban_boards")
 }
 
 model Warehouse {
-  id              String           @id @default(cuid())
-  warehouseCode   String // código da loja (ex: 001)
-  warehouseName   String // nome fantasia
-  razaoSocial     String? // razão social
-  type            String? // tipo (ex: matriz, filial)
-  telefone        String?
-  email           String?
-  cidade          String?
-  estado          String?
-  cep             String?
-  address         String? // logradouro / endereço
-  numero          String?
-  complemento     String?
-  bairro          String?
-  cnpj            String?
-  ie              String? // inscrição estadual
-  im              String? // inscrição municipal
-  cnae            String?
-  ibgeUfId        String?          @map("ibge_uf_id")
-  ibgeMunicipioId String?          @map("ibge_municipio_id")
-  note            String? // observações
-  display         Boolean          @default(true) // ativo/inativo
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  users           User[]
-  clients         Client[]
-  proprietarios   Proprietario[]
-  properties      Property[]
+  id            String    @id @default(cuid())
+  warehouseCode String    // código da loja (ex: 001)
+  warehouseName String    // nome fantasia
+  razaoSocial   String?   // razão social
+  type          String?   // tipo (ex: matriz, filial)
+  telefone      String?
+  email         String?
+  cidade        String?
+  estado        String?
+  cep           String?
+  address       String?   // logradouro / endereço
+  numero        String?
+  complemento   String?
+  bairro        String?
+  cnpj          String?
+  ie            String?   // inscrição estadual
+  im            String?   // inscrição municipal
+  cnae          String?
+  ibgeUfId      String?   @map("ibge_uf_id")
+  ibgeMunicipioId String? @map("ibge_municipio_id")
+  note          String?   // observações
+  display       Boolean   @default(true) // ativo/inativo
+  /// JSON: chaves do PDV (update_config): helpdesk_webrtc_settings, integrations_settings, etc.
+  pdvSettingsJson String? @map("pdv_settings_json") @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  users         User[]
+  clients       Client[]
+  proprietarios Proprietario[]
+  properties    Property[]
   helpDeskTickets HelpDeskTicket[]
-  crmLeads        CrmLead[]
-  hrEmployees     HrEmployee[]
-  siteStories     SiteStory[]
+  crmLeads      CrmLead[]
+  hrEmployees   HrEmployee[]
+  siteStories   SiteStory[]
+  kanbanWorkspaces KanbanWorkspace[]
+  finCategories   FinCategory[]
+  finBankAccounts FinBankAccount[]
+  finTransactions FinTransaction[]
+  finOrigins      FinOrigin[]
+  suppliers       Supplier[]
+}
+
+/// Fornecedor (serviços, produtos ou ambos) por loja.
+model Supplier {
+  id           String   @id @default(cuid())
+  warehouseId  String   @map("warehouse_id")
+  name         String
+  /// pf | pj
+  personType   String   @default("pj") @map("person_type")
+  document     String?
+  email        String?
+  phone        String?
+  /// service | product | both
+  supplyKind   String   @default("service") @map("supply_kind")
+  /// Ex.: limpeza, TI — quando supplyKind é service ou both
+  serviceType  String?  @map("service_type")
+  /// Ex.: material construção — quando supplyKind é product ou both
+  productType  String?  @map("product_type")
+  notes        String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([warehouseId])
+  @@index([supplyKind])
+  @@map("suppliers")
 }
 
 /// Colaborador (RH): ficha de pessoa física; opcionalmente vinculado a um User (credencial do sistema).
@@ -131,10 +217,15 @@ model Client {
   note                    String?
   marketingConsent        Boolean?   @default(false)
   communicationPreference String?
-  warehouse               Warehouse? @relation(fields: [warehouseId], references: [id])
-  createdAt               DateTime   @default(now())
-  updatedAt               DateTime   @updatedAt
-  properties              Property[]
+  registrationIncomplete Boolean  @default(false) @map("registration_incomplete")
+  /// Inativo após soft delete ou desativação manual; listagens usam só ativos não excluídos.
+  active                Boolean   @default(true)
+  /// Preenchido em soft delete (cliente com negócio CRM ligado a imóvel — não apaga linha).
+  deletedAt             DateTime? @map("deleted_at")
+  warehouse             Warehouse? @relation(fields: [warehouseId], references: [id])
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  properties            Property[]
 }
 
 model Proprietario {
@@ -245,20 +336,21 @@ model Property {
   client                Client?           @relation(fields: [clientId], references: [id])
   proprietarioId        String? // ID do módulo Proprietários
   /// null = cadastro master; pending = aguardando aprovação; approved/rejected = fluxo portal proprietário
-  ownerSubmissionStatus String?           @map("owner_submission_status")
-  comodidades           String? // JSON array ["piscina","elevador",...]
-  mobiliado             Boolean?          @default(false)
-  aceita_pets           Boolean?          @default(false)
-  aceita_permuta        Boolean?          @default(false)
-  em_construcao         Boolean?          @default(false)
-  parceria              Boolean?          @default(false)
-  dataPrevistaEntrega   DateTime?
-  tagImovel             String? // JSON array de tags
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
-  media                 PropertyMedia[]
-  tags                  PropertyTag[]
-  sections              PropertySection[]
+  ownerSubmissionStatus String? @map("owner_submission_status")
+  comodidades  String?   // JSON array ["piscina","elevador",...]
+  mobiliado    Boolean?  @default(false)
+  aceita_pets  Boolean?  @default(false)
+  aceita_permuta Boolean? @default(false)
+  em_construcao Boolean? @default(false)
+  parceria     Boolean?  @default(false)
+  dataPrevistaEntrega DateTime?
+  tagImovel    String?   // JSON array de tags
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  media        PropertyMedia[]
+  tags         PropertyTag[]
+  sections     PropertySection[]
+  crmLeadDeals CrmLeadDeal[]
 
   @@unique([warehouseId, ref], map: "Property_warehouseId_ref_key")
 }
@@ -374,6 +466,9 @@ model SiteVisitor {
   country     String?
   city        String?
   region      String?
+  /// Geolocalização: GPS do navegador (se enviado) ou centro aproximado por IP.
+  latitude    Float?
+  longitude   Float?
   referrer    String?
   utmSource   String?
   utmMedium   String?
@@ -427,6 +522,9 @@ model CrmLead {
   assignedUserId          String?   @map("assigned_user_id")
   metaLeadId              String?   @map("meta_lead_id")
   metaFormId              String?   @map("meta_form_id")
+  /// Equipe deve executar próxima ação (ex.: ligar, visita) — destaca no CRM e na agenda.
+  nextActionRequired      Boolean   @default(false) @map("next_action_required")
+  nextActionNote          String?   @map("next_action_note")
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @updatedAt @map("updated_at")
 
@@ -445,33 +543,42 @@ model CrmLead {
 }
 
 model CrmLeadDeal {
-  id              String    @id @default(cuid())
-  crmLeadId       String    @map("crm_lead_id")
-  title           String
-  value           Decimal?  @db.Decimal(14, 2)
-  currency        String    @default("BRL")
-  stage           String    @default("prospeccao")
-  expectedCloseAt DateTime? @map("expected_close_at")
-  description     String?
-  internalNotes   String?   @map("internal_notes")
-  probability     Int?
-  transactionType String?   @map("transaction_type")
-  propertyRef     String?   @map("property_ref")
-  responsible     String?
-  commissionPct   Decimal?  @map("commission_pct") @db.Decimal(5, 2)
-  paymentMethod   String?   @map("payment_method")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id                String    @id @default(cuid())
+  crmLeadId         String    @map("crm_lead_id")
+  title             String
+  value             Decimal?  @db.Decimal(14, 2)
+  currency          String    @default("BRL")
+  stage             String    @default("prospeccao")
+  expectedCloseAt   DateTime? @map("expected_close_at")
+  description       String?
+  internalNotes     String?   @map("internal_notes")
+  probability       Int?
+  transactionType   String?   @map("transaction_type")
+  propertyRef       String?   @map("property_ref")
+  propertyId        String?   @map("property_id")
+  responsible       String?
+  commissionPct     Decimal?  @map("commission_pct") @db.Decimal(5, 2)
+  paymentMethod     String?   @map("payment_method")
+  /// Kanban pós-ganho: contrato, financeiro e documentos (JSON — colunas e cards).
+  pipelineKanbanState Json?   @map("pipeline_kanban_state")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  crmLead CrmLead @relation(fields: [crmLeadId], references: [id], onDelete: Cascade)
+  crmLead      CrmLead             @relation(fields: [crmLeadId], references: [id], onDelete: Cascade)
+  property     Property?           @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  interactions CrmLeadInteraction[]
 
   @@index([crmLeadId])
+  @@index([propertyId])
   @@map("crm_lead_deals")
 }
 
 model CrmLeadInteraction {
   id              String   @id @default(cuid())
   crmLeadId       String   @map("crm_lead_id")
+  crmLeadDealId   String?  @map("crm_lead_deal_id")
+  /// Kanban: registrada | em_andamento | aguardando_retorno | concluida
+  status          String   @default("registrada") @map("status")
   type            String   @default("nota")
   title           String
   description     String?
@@ -479,10 +586,13 @@ model CrmLeadInteraction {
   createdByUserId String?  @map("created_by_user_id")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  crmLead   CrmLead @relation(fields: [crmLeadId], references: [id], onDelete: Cascade)
-  createdBy User?   @relation("CrmLeadInteractionAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  crmLead     CrmLead      @relation(fields: [crmLeadId], references: [id], onDelete: Cascade)
+  crmLeadDeal CrmLeadDeal? @relation(fields: [crmLeadDealId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("CrmLeadInteractionAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([crmLeadId])
+  @@index([crmLeadDealId])
+  @@index([status])
   @@index([createdAt])
   @@map("crm_lead_interactions")
 }
@@ -498,6 +608,12 @@ model CrmLeadTask {
   local           String?
   reminderMinutes Int?     @map("reminder_minutes")
   negocioRef      String?  @map("negocio_ref")
+  checkedInAt     DateTime? @map("checked_in_at")
+  reminderSentAt  DateTime? @map("reminder_sent_at")
+  whatsappConfirmationSentAt DateTime? @map("whatsapp_confirmation_sent_at")
+  /// baixa | normal | alta | urgente (low, normal, high, urgent)
+  priority        String   @default("normal") @map("priority")
+  participantUserIds Json? @map("participant_user_ids")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -521,6 +637,31 @@ model SiteAnalyticsEvent {
   @@index([sessionId])
   @@index([eventType])
   @@index([createdAt])
+}
+
+/// Mensagens do operador (PDV) para o visitante no site — pop-up ou chat (polling).
+model LiveVisitorMessage {
+  id        String   @id @default(cuid())
+  sessionId String   @map("session_id") @db.VarChar(128)
+  kind      String   @db.VarChar(16) // popup | chat
+  body      String   @db.Text
+  delivered Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([sessionId, delivered])
+  @@index([createdAt])
+  @@map("live_visitor_messages")
+}
+
+/// Respostas do visitante no site (chat com o operador / captação).
+model VisitorChatReply {
+  id        String   @id @default(cuid())
+  sessionId String   @map("session_id") @db.VarChar(128)
+  body      String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([sessionId, createdAt])
+  @@map("visitor_chat_replies")
 }
 
 // ----------------------------------------------------------------------
@@ -742,6 +883,90 @@ model HelpDeskTicketEvent {
   createdAt   DateTime       @default(now())
 
   @@index([ticketId])
+}
+
+// ----------------------------------------------------------------------
+// Financeiro PDV (painel: contas a pagar / receber)
+// ----------------------------------------------------------------------
+
+model FinCategory {
+  id          String   @id @default(cuid())
+  warehouseId String   @map("warehouse_id")
+  /// receivable | payable
+  kind        String
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  warehouse    Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  transactions FinTransaction[]
+
+  @@index([warehouseId, kind])
+  @@map("fin_categories")
+}
+
+model FinBankAccount {
+  id            String   @id @default(cuid())
+  warehouseId   String   @map("warehouse_id")
+  name          String
+  bankName      String?  @map("bank_name")
+  agency        String?
+  accountNumber String   @map("account_number")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  warehouse    Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  transactions FinTransaction[]
+
+  @@index([warehouseId])
+  @@map("fin_bank_accounts")
+}
+
+/// Origem de receita (catálogo por loja) — usado no PDV em “Origem”.
+model FinOrigin {
+  id          String   @id @default(cuid())
+  warehouseId String   @map("warehouse_id")
+  name        String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([warehouseId])
+  @@map("fin_origins")
+}
+
+model FinTransaction {
+  id            String   @id @default(cuid())
+  warehouseId   String   @map("warehouse_id")
+  /// RECEIVABLE | PAYABLE
+  kind          String
+  categoryId    String?  @map("category_id")
+  company       String
+  amount        Decimal  @db.Decimal(14, 2)
+  currency      String   @default("BRL")
+  date          DateTime @map("date")
+  dueDate       DateTime @map("due_date")
+  /// pending | paid | cancelled
+  status        String   @default("pending")
+  paidAt        DateTime? @map("paid_at")
+  note          String?
+  reference     String?  @map("reference")
+  bankAccountId String?  @map("bank_account_id")
+  /// Campos extras (parcelas fiscais, clientid, anexos, etc.)
+  metadata      Json?    @map("metadata")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  category    FinCategory?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  bankAccount FinBankAccount?  @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+
+  @@index([warehouseId, kind])
+  @@index([dueDate])
+  @@index([status])
+  @@map("fin_transactions")
 }
 
 // ----------------------------------------------------------------------

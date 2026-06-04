@@ -3,10 +3,13 @@ RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+
+# 🔥 IMPORTANTE: evita rodar postinstall (prisma generate automático)
+RUN npm ci --ignore-scripts
 
 COPY . .
-# prisma generate não precisa de DATABASE_URL (gera apenas o client TypeScript)
+
+# Prisma + build controlados manualmente
 RUN npx prisma generate && npm run build
 
 # ──────────────────────────────────────────
@@ -20,21 +23,25 @@ RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 appuser
 
 COPY package*.json ./
-RUN npm ci --omit=dev
 
-# Copia CLI do Prisma (é devDependency, não vem no npm ci --omit=dev)
+# Mantém ignore-scripts aqui também (já estava certo)
+RUN npm ci --omit=dev --ignore-scripts
+
+# Copia Prisma CLI e engines do builder
 COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
+
+# Copia schema
 COPY prisma ./prisma
 
-# Regenera o Prisma Client NESTA stage (runner) — garante que os
-# binários do engine correspondem EXATAMENTE a esta plataforma Alpine.
-# Roda como root, então tem permissão de escrita e detecção de OpenSSL funciona.
+# 🔥 Gera client no ambiente correto (Alpine)
 RUN npx prisma generate
 
+# Copia build
 COPY --from=builder /app/dist ./dist
 
+# Permissões
 RUN mkdir -p uploads \
  && chown -R appuser:nodejs uploads \
       node_modules/@prisma \
@@ -42,6 +49,7 @@ RUN mkdir -p uploads \
       node_modules/prisma \
       node_modules/.bin/prisma
 
+# Entrypoint
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh
 
