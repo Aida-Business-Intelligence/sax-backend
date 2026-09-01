@@ -133,6 +133,35 @@ router.get('/by-slug/:slug', async (req, res, next) => {
 });
 
 /**
+ * POST /api/blog/by-slug/:slug/like — incrementa curtidas (PÚBLICO, sem auth).
+ * Persiste no banco (antes o front só gravava no localStorage por navegador,
+ * então o like sumia/zerava em outro PC). Retorna { likes } atualizado.
+ */
+router.post('/by-slug/:slug/like', async (req, res, next) => {
+  try {
+    const { slug } = req.params;
+    const row = await prisma.blogPost.findFirst({
+      where: { slug, published: true },
+    });
+    if (!row) {
+      res.status(404).json({ message: 'Post não encontrado' });
+      return;
+    }
+    const reactions = row.reactions
+      ? (JSON.parse(row.reactions) as { likes?: number })
+      : { likes: 0 };
+    const likes = (reactions.likes ?? 0) + 1;
+    await prisma.blogPost.update({
+      where: { id: row.id },
+      data: { reactions: JSON.stringify({ ...reactions, likes }) },
+    });
+    res.json({ likes });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
  * GET /api/blog/:id - obtém por id (PDV, qualquer status). Requer auth.
  */
 router.get('/:id', authMiddleware, async (req, res, next) => {
