@@ -5,12 +5,14 @@
  * "esqueci minha senha" no backend, então um admin que perde a senha fica
  * trancado do lado de fora sem nenhuma saída pela interface.
  *
- * Uso (na máquina que enxerga o banco, com DATABASE_URL configurada):
+ * Em produção (container Docker) roda com node, sobre o build:
+ *
+ *   docker compose exec api node dist/scripts/reset-senha.js admin@aida.com.br "NovaSenhaForte123"
+ *   docker compose exec api node dist/scripts/reset-senha.js admin@aida.com.br --conferir
+ *
+ * Em desenvolvimento (com DATABASE_URL apontando pro banco), roda com tsx:
  *
  *   npm run db:reset-senha -- admin@aida.com.br "NovaSenhaForte123"
- *
- * Para só conferir se o usuário existe, sem trocar nada:
- *
  *   npm run db:reset-senha -- admin@aida.com.br --conferir
  */
 import { PrismaClient } from '@prisma/client';
