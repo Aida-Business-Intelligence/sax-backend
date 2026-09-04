@@ -133,28 +133,56 @@ router.get('/by-slug/:slug', async (req, res, next) => {
 });
 
 /**
+ * Soma `delta` (+1 curtir / -1 descurtir) nas curtidas do post publicado com esse slug.
+ * Nunca deixa o total ficar negativo. Retorna o total novo, ou null se o post não existe.
+ */
+async function ajustarCurtidas(slug: string, delta: 1 | -1): Promise<number | null> {
+  const row = await prisma.blogPost.findFirst({
+    where: { slug, published: true },
+  });
+  if (!row) return null;
+  const reactions = row.reactions
+    ? (JSON.parse(row.reactions) as { likes?: number })
+    : { likes: 0 };
+  const likes = Math.max(0, (reactions.likes ?? 0) + delta);
+  await prisma.blogPost.update({
+    where: { id: row.id },
+    data: { reactions: JSON.stringify({ ...reactions, likes }) },
+  });
+  return likes;
+}
+
+/**
  * POST /api/blog/by-slug/:slug/like — incrementa curtidas (PÚBLICO, sem auth).
  * Persiste no banco (antes o front só gravava no localStorage por navegador,
  * então o like sumia/zerava em outro PC). Retorna { likes } atualizado.
  */
 router.post('/by-slug/:slug/like', async (req, res, next) => {
   try {
-    const { slug } = req.params;
-    const row = await prisma.blogPost.findFirst({
-      where: { slug, published: true },
-    });
-    if (!row) {
+    const likes = await ajustarCurtidas(req.params.slug, 1);
+    if (likes === null) {
       res.status(404).json({ message: 'Post não encontrado' });
       return;
     }
-    const reactions = row.reactions
-      ? (JSON.parse(row.reactions) as { likes?: number })
-      : { likes: 0 };
-    const likes = (reactions.likes ?? 0) + 1;
-    await prisma.blogPost.update({
-      where: { id: row.id },
-      data: { reactions: JSON.stringify({ ...reactions, likes }) },
-    });
+    res.json({ likes });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * POST /api/blog/by-slug/:slug/unlike — desfaz uma curtida (PÚBLICO, sem auth).
+ * Espelho do /like: o site chama quando o visitante clica de novo no coração
+ * que já estava preenchido (toggle). Não deixa o total ir abaixo de 0.
+ * Retorna { likes } atualizado.
+ */
+router.post('/by-slug/:slug/unlike', async (req, res, next) => {
+  try {
+    const likes = await ajustarCurtidas(req.params.slug, -1);
+    if (likes === null) {
+      res.status(404).json({ message: 'Post não encontrado' });
+      return;
+    }
     res.json({ likes });
   } catch (e) {
     next(e);
