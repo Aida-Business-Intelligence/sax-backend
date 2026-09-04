@@ -77,6 +77,11 @@ router.get('/', async (req, res, next) => {
             alt: p.title,
           })) ?? [],
         tagImovel,
+        // Sinais de lancamento: a home usa na secao "Futuros Lancamentos" e a
+        // lista /imoveis no filtro status=na-planta. Antes so o detalhe (by-slug)
+        // devolvia esses campos, entao a secao nunca encontrava nada.
+        em_construcao: p.em_construcao ?? false,
+        dataPrevistaEntrega: p.dataPrevistaEntrega ? p.dataPrevistaEntrega.toISOString().slice(0, 10) : null,
         builder: p.builder ?? undefined,
       };
     });
