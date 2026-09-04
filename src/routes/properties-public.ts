@@ -51,6 +51,9 @@ router.get('/', async (req, res, next) => {
         transactionTypes,
         bedrooms: p.bedrooms ?? 0,
         bathrooms: p.bathrooms ?? 0,
+        suites: p.suites ?? null,
+        demiSuites: p.demiSuites ?? null,
+        garage: p.garage ?? null,
         area: p.area ? Number(p.area) : 0,
         type: (p.propertyType ?? 'apartamento') as string,
         address: {
