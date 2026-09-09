@@ -77,6 +77,7 @@ export function formatPropriedade(p: {
   priceAluguel?: Prisma.Decimal | null;
   priceCrowdfunding?: Prisma.Decimal | null;
   area: Prisma.Decimal | null;
+  areaPrivativa?: Prisma.Decimal | null;
   bedrooms: number | null;
   suites?: number | null;
   demiSuites?: number | null;
@@ -130,6 +131,7 @@ export function formatPropriedade(p: {
     preco_crowdfunding: p.priceCrowdfunding != null ? Number(p.priceCrowdfunding) : null,
     area_m2: p.area != null ? Number(p.area) : null,
     area_total: p.area != null ? Number(p.area) : null,
+    area_privativa: p.areaPrivativa != null ? Number(p.areaPrivativa) : null,
     quartos: p.bedrooms ?? null,
     suites: p.suites ?? null,
     demi_suites: p.demiSuites ?? null,
@@ -424,6 +426,10 @@ router.post('/create', async (req, res, next) => {
             priceAluguel,
             priceCrowdfunding,
             area: body.area_total != null && body.area_total !== '' ? new Prisma.Decimal(Number(body.area_total)) : null,
+            areaPrivativa:
+              body.area_privativa != null && body.area_privativa !== ''
+                ? new Prisma.Decimal(Number(body.area_privativa))
+                : null,
             bedrooms: body.quartos != null && body.quartos !== '' ? Number(body.quartos) : null,
             suites: body.suites != null && body.suites !== '' ? Number(body.suites) : null,
             demiSuites: body.demi_suites != null && body.demi_suites !== '' ? Number(body.demi_suites) : null,
@@ -605,6 +611,12 @@ router.put('/update/:id', async (req, res, next) => {
         priceAluguel,
         priceCrowdfunding,
         area: body.area_total != null && body.area_total !== '' ? new Prisma.Decimal(Number(body.area_total)) : existing.area,
+        areaPrivativa:
+          body.area_privativa !== undefined
+            ? body.area_privativa != null && body.area_privativa !== ''
+              ? new Prisma.Decimal(Number(body.area_privativa))
+              : null
+            : existing.areaPrivativa,
         bedrooms: body.quartos !== undefined && body.quartos !== '' ? Number(body.quartos) : existing.bedrooms,
         suites: body.suites !== undefined ? (body.suites === '' ? null : Number(body.suites)) : existing.suites,
         demiSuites: body.demi_suites !== undefined ? (body.demi_suites === '' ? null : Number(body.demi_suites)) : existing.demiSuites,
