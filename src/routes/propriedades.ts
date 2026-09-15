@@ -17,13 +17,13 @@ import {
   keys,
   resolvePropertyMediaPublicUrl,
 } from '../lib/storage.js';
-import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
+import { validateAndCompressImage, safeExtFromMime, SIZE, UPLOAD_HARD_CEILING } from '../lib/file-validation.js';
 
 const router = Router();
 
 const propertyImageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: SIZE.PROPERTY_IMAGE },
+  limits: { fileSize: UPLOAD_HARD_CEILING },
   fileFilter: (_req, file, cb) => {
     const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     cb(null, allowed.includes(file.mimetype));
@@ -323,14 +323,14 @@ router.post('/upload/:propertyId', propertyImageUpload.array('file', 20), async 
     const created: { id: string; url: string; sortOrder: number }[] = [];
     let sortOrder = maxOrder + 1;
     for (const file of multerFiles) {
-      const validation = validateImage(file.buffer, SIZE.PROPERTY_IMAGE);
+      const validation = await validateAndCompressImage(file.buffer, SIZE.PROPERTY_IMAGE);
       if (!validation.ok) {
         res.status(400).json({ success: false, message: validation.error });
         return;
       }
       const ext = safeExtFromMime(validation.mime);
       const objectKey = keys.propertyImage(propertyId, `${Date.now()}-${sortOrder}${ext}`);
-      const url = await uploadPublic(objectKey, file.buffer, validation.mime);
+      const url = await uploadPublic(objectKey, validation.buffer!, validation.mime);
       const m = await prisma.propertyMedia.create({
         data: { propertyId, url, type: 'image', sortOrder },
       });

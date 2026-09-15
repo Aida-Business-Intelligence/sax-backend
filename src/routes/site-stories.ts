@@ -4,13 +4,13 @@ import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { uploadPublic, deleteObject, keyFromCdnUrl, keys } from '../lib/storage.js';
-import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
+import { validateAndCompressImage, safeExtFromMime, SIZE, UPLOAD_HARD_CEILING } from '../lib/file-validation.js';
 
 const router = Router();
 
 const storyUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: SIZE.SITE_ASSET },
+  limits: { fileSize: UPLOAD_HARD_CEILING },
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
   },
@@ -61,7 +61,7 @@ router.post(
         res.status(400).json({ message: 'Envie o arquivo no campo "file"' });
         return;
       }
-      const validation = validateImage(req.file.buffer, SIZE.SITE_ASSET);
+      const validation = await validateAndCompressImage(req.file.buffer, SIZE.SITE_ASSET);
       if (!validation.ok) {
         res.status(422).json({ message: validation.error });
         return;
@@ -69,7 +69,7 @@ router.post(
       const ext = safeExtFromMime(validation.mime!);
       const sid = randomUUID();
       const objectKey = keys.siteStory(sid, `bg${ext}`);
-      const url = await uploadPublic(objectKey, req.file.buffer, validation.mime!);
+      const url = await uploadPublic(objectKey, validation.buffer!, validation.mime!);
       res.json({ url, storyKey: sid });
     } catch (e) {
       console.error('[site-stories upload]', e);

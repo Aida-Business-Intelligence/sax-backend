@@ -3,13 +3,14 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { uploadPublic, keys } from '../lib/storage.js';
-import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
+import { validateAndCompressImage, safeExtFromMime, SIZE, UPLOAD_HARD_CEILING } from '../lib/file-validation.js';
 
 const router = Router();
 
 const blogCoverUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: SIZE.AVATAR },
+  // Teto bruto, ANTES de comprimir — SIZE.AVATAR é o limite depois de comprimida.
+  limits: { fileSize: UPLOAD_HARD_CEILING },
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
   },
@@ -28,7 +29,7 @@ router.post(
         res.status(400).json({ message: 'Nenhum arquivo enviado no campo "file"' });
         return;
       }
-      const validation = validateImage(req.file.buffer, SIZE.AVATAR);
+      const validation = await validateAndCompressImage(req.file.buffer, SIZE.AVATAR);
       if (!validation.ok) {
         res.status(422).json({ message: validation.error });
         return;
@@ -36,7 +37,7 @@ router.post(
       const ext = safeExtFromMime(validation.mime!);
       const safeBase = (req.file.originalname || 'cover').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
       const key = keys.blogCover(`${Date.now()}-${safeBase}${ext}`);
-      const url = await uploadPublic(key, req.file.buffer, validation.mime!);
+      const url = await uploadPublic(key, validation.buffer!, validation.mime!);
       res.json({ url });
     } catch (e) {
       next(e);
