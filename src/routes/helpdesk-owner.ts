@@ -4,7 +4,7 @@ import type { Request } from 'express';
 import multer from 'multer';
 import type { Prisma } from '@prisma/client';
 import { uploadPublic, keys } from '../lib/storage.js';
-import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
+import { validateAndCompressImage, safeExtFromMime, SIZE, UPLOAD_HARD_CEILING } from '../lib/file-validation.js';
 import { generateUniqueProtocol } from '../lib/helpdesk-protocol.js';
 import { getScreenShareState, postScreenShareSignal } from '../lib/helpdesk-screen-share.js';
 import { prisma } from '../lib/prisma.js';
@@ -14,7 +14,7 @@ const PRIORITIES = new Set(['LOW', 'NORMAL', 'HIGH', 'URGENT']);
 
 const helpdeskOwnerImageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: SIZE.HELPDESK_IMAGE },
+  limits: { fileSize: UPLOAD_HARD_CEILING },
   fileFilter: (_req, file, cb) => {
     const ok = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.mimetype);
     if (!ok) return cb(new Error('Apenas imagens (JPEG, PNG, GIF ou WebP)'));
@@ -304,14 +304,14 @@ export function attachHelpdeskOwnerRoutes(router: Router) {
 
         let imageUrl: string | null = null;
         if (uploaded) {
-          const v = validateImage(uploaded.buffer, SIZE.HELPDESK_IMAGE);
+          const v = await validateAndCompressImage(uploaded.buffer, SIZE.HELPDESK_IMAGE);
           if (!v.ok) {
             res.status(422).json({ message: v.error });
             return;
           }
           const ext = safeExtFromMime(v.mime!);
           const key = keys.helpdeskImage(id, `${Date.now()}-${randomUUID()}${ext}`);
-          imageUrl = await uploadPublic(key, uploaded.buffer, v.mime!);
+          imageUrl = await uploadPublic(key, v.buffer!, v.mime!);
         }
 
         const now = new Date();
