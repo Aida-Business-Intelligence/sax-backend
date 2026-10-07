@@ -314,6 +314,9 @@ model Property {
   priceAluguel          Decimal?          @db.Decimal(14, 2)
   priceCrowdfunding     Decimal?          @db.Decimal(14, 2)
   area                  Decimal?          @db.Decimal(10, 2)
+  /// Area privativa (util) em m2. A `area` acima e a area TOTAL: o DWV
+  /// traz as duas separadas e o site deve destacar a privativa.
+  areaPrivativa         Decimal?          @db.Decimal(10, 2)
   bedrooms              Int?
   suites                Int? // quantos quartos são suítes
   demiSuites            Int? // quantos são demi-suítes
@@ -326,6 +329,10 @@ model Property {
   state                 String?
   zip                   String?
   builder               String? // Construtora
+  /// Nome do empreendimento/edificio (ex.: "Ibiza Towers", "Ed. Aspen").
+  /// Diferente de `builder` (a construtora). Frequentemente visivel numa
+  /// placa/fachada nas fotos do imovel mas nao capturado na importacao.
+  empreendimento        String?
   latitude              Decimal?          @db.Decimal(10, 7)
   longitude             Decimal?          @db.Decimal(10, 7)
   // Hash do endereço na última geocodificação (logradouro+número+bairro+cidade+UF+CEP)

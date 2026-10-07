@@ -6,13 +6,13 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { uploadPublic, deleteObject, keyFromCdnUrl, keys } from '../lib/storage.js';
-import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
+import { validateAndCompressImage, safeExtFromMime, SIZE, UPLOAD_HARD_CEILING } from '../lib/file-validation.js';
 
 const router = Router();
 
 const avatarUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: SIZE.AVATAR },
+  limits: { fileSize: UPLOAD_HARD_CEILING },
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
   },
@@ -399,7 +399,7 @@ async function uploadAvatar(req: Request, res: Response) {
       res.status(400).json({ message: 'Envie a imagem no campo "file"' });
       return;
     }
-    const validation = validateImage(file.buffer, SIZE.AVATAR);
+    const validation = await validateAndCompressImage(file.buffer, SIZE.AVATAR);
     if (!validation.ok) {
       res.status(422).json({ message: validation.error });
       return;
@@ -411,7 +411,7 @@ async function uploadAvatar(req: Request, res: Response) {
     }
     const ext = safeExtFromMime(validation.mime!);
     const objectKey = keys.avatar(`${authed.id}-${randomUUID()}${ext}`);
-    const url = await uploadPublic(objectKey, file.buffer, validation.mime!);
+    const url = await uploadPublic(objectKey, validation.buffer!, validation.mime!);
     await prisma.user.update({
       where: { id: authed.id },
       data: { avatarUrl: url },

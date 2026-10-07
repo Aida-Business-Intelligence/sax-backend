@@ -51,6 +51,9 @@ router.get('/', async (req, res, next) => {
         transactionTypes,
         bedrooms: p.bedrooms ?? 0,
         bathrooms: p.bathrooms ?? 0,
+        suites: p.suites ?? null,
+        demiSuites: p.demiSuites ?? null,
+        garage: p.garage ?? null,
         area: p.area ? Number(p.area) : 0,
         type: (p.propertyType ?? 'apartamento') as string,
         address: {
@@ -77,6 +80,13 @@ router.get('/', async (req, res, next) => {
             alt: p.title,
           })) ?? [],
         tagImovel,
+        areaPrivativa: p.areaPrivativa != null ? Number(p.areaPrivativa) : null,
+        empreendimento: p.empreendimento ?? null,
+        // Sinais de lancamento: a home usa na secao "Futuros Lancamentos" e a
+        // lista /imoveis no filtro status=na-planta. Antes so o detalhe (by-slug)
+        // devolvia esses campos, entao a secao nunca encontrava nada.
+        em_construcao: p.em_construcao ?? false,
+        dataPrevistaEntrega: p.dataPrevistaEntrega ? p.dataPrevistaEntrega.toISOString().slice(0, 10) : null,
         builder: p.builder ?? undefined,
       };
     });
@@ -208,6 +218,8 @@ router.get('/by-slug/:slug', async (req, res, next) => {
       parceria: p.parceria ?? false,
       dataPrevistaEntrega: p.dataPrevistaEntrega ? p.dataPrevistaEntrega.toISOString().slice(0, 10) : null,
       tagImovel: parseJsonArray(p.tagImovel),
+      areaPrivativa: p.areaPrivativa != null ? Number(p.areaPrivativa) : null,
+      empreendimento: p.empreendimento ?? null,
     });
   } catch (e) {
     next(e);

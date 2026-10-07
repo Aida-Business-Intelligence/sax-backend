@@ -3,6 +3,8 @@
  * Never trust file extension or Content-Type header alone — always check the buffer.
  */
 
+import sharp from 'sharp';
+
 export interface ImageValidationResult {
   ok: boolean;
   /** Detected MIME type when ok=true */
@@ -62,35 +64,95 @@ function isIco(buf: Buffer): boolean {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+// ─── Compressão no upload ──────────────────────────────────────────────────
+// Pedido de 15/09 (Tiago): fotos de celular vinham gigantes (dezenas de MB)
+// e batiam no limite de tamanho ("File too large"), sem opção de comprimir
+// na hora. Agora toda imagem passa por aqui antes de checar o limite: reduz
+// dimensão (lado maior até COMPRESS_MAX_DIMENSION) e reencoda com qualidade
+// alta -- perda visual desprezível, mas corta bastante peso de foto de
+// câmera/celular que normalmente vem com compressão mínima.
+
 /**
- * Validates that a buffer is a genuine raster image.
- * Accepted formats: JPEG, PNG, GIF, WebP.
- * Set `allowIco=true` to also accept ICO (for favicon uploads).
+ * Recusa upload absurdo antes mesmo de tentar decodificar (abuso/decompression
+ * bomb). O limite de verdade (SIZE.*) é conferido DEPOIS de comprimir.
+ * Exportado porque o multer (`limits.fileSize`) precisa do MESMO teto —
+ * senão ele rejeita o arquivo bruto (foto de celular grande) antes mesmo da
+ * imagem chegar na rota pra ser comprimida.
  */
-export function validateImage(
+export const UPLOAD_HARD_CEILING = 60 * 1024 * 1024; // 60 MB brutos
+
+const COMPRESS_MAX_DIMENSION = 2400; // px no lado maior — de sobra pra qualquer uso no site/PDV
+const COMPRESS_QUALITY = 88; // quase sem perda visível
+
+/**
+ * Recomprime a imagem (reduz dimensão gigante + reencoda com qualidade alta).
+ * GIF e ICO passam direto (comprimir GIF perderia a animação; ICO já é
+ * sempre pequeno). Se a "compressão" sair maior que o original (imagem já
+ * bem otimizada) ou o sharp não conseguir decodificar, mantém o original.
+ */
+async function compressImage(buf: Buffer, mime: string): Promise<Buffer> {
+  if (mime !== 'image/jpeg' && mime !== 'image/png' && mime !== 'image/webp') return buf;
+  try {
+    let pipeline = sharp(buf, { failOn: 'none' }).rotate();
+    const { width = 0, height = 0 } = await pipeline.metadata();
+    if (width > COMPRESS_MAX_DIMENSION || height > COMPRESS_MAX_DIMENSION) {
+      pipeline = pipeline.resize({
+        width: COMPRESS_MAX_DIMENSION,
+        height: COMPRESS_MAX_DIMENSION,
+        fit: 'inside',
+        withoutEnlargement: true,
+      });
+    }
+    const out =
+      mime === 'image/png'
+        ? await pipeline.png({ quality: COMPRESS_QUALITY, compressionLevel: 9 }).toBuffer()
+        : mime === 'image/webp'
+          ? await pipeline.webp({ quality: COMPRESS_QUALITY }).toBuffer()
+          : await pipeline.jpeg({ quality: COMPRESS_QUALITY, mozjpeg: true }).toBuffer();
+    return out.length < buf.length ? out : buf;
+  } catch {
+    return buf;
+  }
+}
+
+/**
+ * Valida a imagem (magic bytes) e recomprime ANTES de checar o limite de
+ * tamanho — por isso uma foto de celular de 30 MB normalmente passa: depois
+ * de comprimida cai bem abaixo de qualquer SIZE.*. Substitui `validateImage`
+ * em toda rota de upload de imagem.
+ */
+export async function validateAndCompressImage(
   buf: Buffer,
   maxBytes: number,
   allowIco = false
-): ImageValidationResult {
+): Promise<ImageValidationResult & { buffer?: Buffer }> {
   if (buf.length === 0) {
     return { ok: false, mime: '', error: 'Arquivo vazio' };
   }
-  if (buf.length > maxBytes) {
-    const maxMb = (maxBytes / 1024 / 1024).toFixed(0);
-    return { ok: false, mime: '', error: `Arquivo muito grande (máx. ${maxMb} MB)` };
+  if (buf.length > UPLOAD_HARD_CEILING) {
+    const maxMb = (UPLOAD_HARD_CEILING / 1024 / 1024).toFixed(0);
+    return { ok: false, mime: '', error: `Arquivo muito grande (máx. ${maxMb} MB antes de comprimir)` };
   }
 
-  if (isJpeg(buf)) return { ok: true, mime: 'image/jpeg' };
-  if (isPng(buf)) return { ok: true, mime: 'image/png' };
-  if (isGif(buf)) return { ok: true, mime: 'image/gif' };
-  if (isWebp(buf)) return { ok: true, mime: 'image/webp' };
-  if (allowIco && isIco(buf)) return { ok: true, mime: 'image/x-icon' };
+  let mime = '';
+  if (isJpeg(buf)) mime = 'image/jpeg';
+  else if (isPng(buf)) mime = 'image/png';
+  else if (isGif(buf)) mime = 'image/gif';
+  else if (isWebp(buf)) mime = 'image/webp';
+  else if (allowIco && isIco(buf)) mime = 'image/x-icon';
 
-  return {
-    ok: false,
-    mime: '',
-    error: 'Formato de imagem inválido. Use JPEG, PNG, GIF ou WebP.',
-  };
+  if (!mime) {
+    return { ok: false, mime: '', error: 'Formato de imagem inválido. Use JPEG, PNG, GIF ou WebP.' };
+  }
+
+  const compressed = await compressImage(buf, mime);
+
+  if (compressed.length > maxBytes) {
+    const maxMb = (maxBytes / 1024 / 1024).toFixed(0);
+    return { ok: false, mime: '', error: `Arquivo muito grande mesmo após compressão (máx. ${maxMb} MB)` };
+  }
+
+  return { ok: true, mime, buffer: compressed };
 }
 
 /** Validates any file for PDV file manager (size only — any type is accepted). */

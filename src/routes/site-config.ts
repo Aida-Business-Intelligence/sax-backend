@@ -2,13 +2,13 @@ import multer from 'multer';
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { uploadPublic, deleteObject, keyFromCdnUrl, keys } from '../lib/storage.js';
-import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
+import { validateAndCompressImage, safeExtFromMime, SIZE, UPLOAD_HARD_CEILING } from '../lib/file-validation.js';
 
 const router = Router();
 
 const siteAssetUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: SIZE.SITE_ASSET },
+  limits: { fileSize: UPLOAD_HARD_CEILING },
   fileFilter: (_req, file, cb) => {
     // Accept any image MIME; magic bytes are verified after upload
     cb(null, file.mimetype.startsWith('image/'));
@@ -520,7 +520,7 @@ router.post('/upload-logo', siteAssetUpload.single('file'), async (req: Request,
       res.status(400).json({ success: false, message: 'Nenhum arquivo enviado no campo "file"' });
       return;
     }
-    const validation = validateImage(req.file.buffer, SIZE.SITE_ASSET);
+    const validation = await validateAndCompressImage(req.file.buffer, SIZE.SITE_ASSET);
     if (!validation.ok) {
       res.status(400).json({ success: false, message: validation.error });
       return;
@@ -530,7 +530,7 @@ router.post('/upload-logo', siteAssetUpload.single('file'), async (req: Request,
     await deleteObject(keyFromCdnUrl(current?.logoUrl));
     const ext = safeExtFromMime(validation.mime);
     const objectKey = keys.siteImage('logo', `${Date.now()}${ext}`);
-    const logoUrl = await uploadPublic(objectKey, req.file.buffer, validation.mime);
+    const logoUrl = await uploadPublic(objectKey, validation.buffer!, validation.mime);
     res.json({ success: true, logoUrl, message: 'Logo enviada com sucesso' });
   } catch (e) {
     res.status(500).json({ success: false, message: (e as Error).message });
@@ -548,7 +548,7 @@ router.post('/upload-favicon', siteAssetUpload.single('file'), async (req: Reque
       return;
     }
     // ICO files are not raster images so we allow them as a special case
-    const validation = validateImage(req.file.buffer, SIZE.SITE_ASSET, /* allowIco */ true);
+    const validation = await validateAndCompressImage(req.file.buffer, SIZE.SITE_ASSET, /* allowIco */ true);
     if (!validation.ok) {
       res.status(400).json({ success: false, message: validation.error });
       return;
@@ -557,7 +557,7 @@ router.post('/upload-favicon', siteAssetUpload.single('file'), async (req: Reque
     await deleteObject(keyFromCdnUrl(current?.faviconUrl));
     const ext = safeExtFromMime(validation.mime);
     const objectKey = keys.siteImage('favicon', `${Date.now()}${ext}`);
-    const faviconUrl = await uploadPublic(objectKey, req.file.buffer, validation.mime);
+    const faviconUrl = await uploadPublic(objectKey, validation.buffer!, validation.mime);
     res.json({ success: true, faviconUrl, message: 'Favicon enviado com sucesso' });
   } catch (e) {
     res.status(500).json({ success: false, message: (e as Error).message });
@@ -574,14 +574,14 @@ router.post('/upload-partner-logo', siteAssetUpload.single('file'), async (req: 
       res.status(400).json({ success: false, message: 'Nenhum arquivo enviado no campo "file"' });
       return;
     }
-    const validation = validateImage(req.file.buffer, SIZE.SITE_ASSET);
+    const validation = await validateAndCompressImage(req.file.buffer, SIZE.SITE_ASSET);
     if (!validation.ok) {
       res.status(400).json({ success: false, message: validation.error });
       return;
     }
     const ext = safeExtFromMime(validation.mime);
     const objectKey = keys.sitePartner(`${Date.now()}${ext}`);
-    const url = await uploadPublic(objectKey, req.file.buffer, validation.mime);
+    const url = await uploadPublic(objectKey, validation.buffer!, validation.mime);
     res.json({ success: true, url, message: 'Logo do parceiro enviada' });
   } catch (e) {
     res.status(500).json({ success: false, message: (e as Error).message });

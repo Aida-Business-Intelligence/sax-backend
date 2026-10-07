@@ -6,7 +6,7 @@ import {
   mergeWarehousePdvSettings,
 } from '../lib/pdv-warehouse-settings.js';
 import { uploadPublic, keys } from '../lib/storage.js';
-import { validateImage, safeExtFromMime, SIZE } from '../lib/file-validation.js';
+import { validateAndCompressImage, safeExtFromMime, SIZE, UPLOAD_HARD_CEILING } from '../lib/file-validation.js';
 
 const router = Router();
 
@@ -78,7 +78,7 @@ router.post('/update_config', async (req: Request, res: Response) => {
 
 const settingsImageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: SIZE.SETTINGS_LOGO },
+  limits: { fileSize: UPLOAD_HARD_CEILING },
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
   },
@@ -101,7 +101,7 @@ router.put(
       return;
     }
 
-    const validation = validateImage(req.file.buffer, SIZE.SETTINGS_LOGO);
+    const validation = await validateAndCompressImage(req.file.buffer, SIZE.SETTINGS_LOGO);
     if (!validation.ok) {
       res.status(422).json({ status: false, message: validation.error });
       return;
@@ -109,7 +109,7 @@ router.put(
 
     const ext = safeExtFromMime(validation.mime!);
     const key = keys.settingsImage(warehouseId, type, `${Date.now()}${ext}`);
-    const url = await uploadPublic(key, req.file.buffer, validation.mime!);
+    const url = await uploadPublic(key, validation.buffer!, validation.mime!);
 
     res.json({ status: true, file: url, message: 'Imagem enviada com sucesso' });
   },
